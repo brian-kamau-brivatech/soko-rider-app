@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -31,24 +31,32 @@ jobs:
 
       - name: Generate Android Scaffolding
         run: |
-          flutter create --platforms=android --org=ke.co.sokoexpressmtaani .
+          flutter create --platforms=android --org=ke.co.sokoexpressmtaani --project-name=rider_app .
           python3 -c '
           import os
-          path = "android/app/src/main/AndroidManifest.xml"
-          with open(path, "r") as f:
-              content = f.read()
-          perms = """
+
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r") as f:
+                  content = f.read()
+              perms = """
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-              <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
               <uses-permission android:name="android.permission.INTERNET" />
           """
-          if "ACCESS_FINE_LOCATION" not in content:
-              content = content.replace("<manifest", "<manifest" + perms, 1)
-              with open(path, "w") as f:
-                  f.write(content)
+              if "ACCESS_FINE_LOCATION" not in content:
+                  content = content.replace("<application", perms + "\n    <application", 1)
+                  with open(manifest_path, "w") as f:
+                      f.write(content)
+
+          bg_path = "android/app/build.gradle"
+          if os.path.exists(bg_path):
+              with open(bg_path, "r") as f:
+                  bg = f.read()
+              bg = bg.replace("minSdkVersion 16", "minSdkVersion 21").replace("minSdkVersion 19", "minSdkVersion 21")
+              bg = bg.replace("minSdk = 16", "minSdk = 21").replace("minSdk = 19", "minSdk = 21")
+              with open(bg_path, "w") as f:
+                  f.write(bg)
           '
 
       - name: Install Dependencies
@@ -67,8 +75,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.0.0
-          name: "Soko Express Rider v1.0.0 (Release)"
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Soko Express Rider v1.0.${{ github.run_number }} (Release)"
           body: "Official Soko Express Mtaani Rider Android App (Live GPS Tracking & Odoo Integration)."
           files: build/app/outputs/flutter-apk/app-release.apk
         env:

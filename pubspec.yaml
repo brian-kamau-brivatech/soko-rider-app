@@ -15,9 +15,8 @@ dependencies:
   web_socket_channel: ^3.0.0
   shared_preferences: ^2.2.2
 
-  # 100% Free GPS & Background Handling
+  # 100% Free GPS (Hardware)
   geolocator: ^12.0.0
-  flutter_foreground_task: ^7.0.0
 
   # 100% Free OpenStreetMap in Flutter (No Google Maps SDK)
   flutter_map: ^7.0.0
