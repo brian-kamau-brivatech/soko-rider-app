@@ -22,5 +22,11 @@ dependencies:
   flutter_map: ^7.0.0
   latlong2: ^0.9.1
 
+  # Open Google Maps navigation and phone dialer
+  url_launcher: ^6.3.0
+
+  # Plus Jakarta Sans (same font as the Soko website tracking page)
+  google_fonts: ^6.2.1
+
 flutter:
   uses-material-design: true

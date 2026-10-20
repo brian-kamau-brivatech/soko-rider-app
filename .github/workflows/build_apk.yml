@@ -32,24 +32,30 @@ jobs:
       - name: Generate Android Scaffolding
         run: |
           flutter create --platforms=android --org=ke.co.sokoexpressmtaani --project-name=rider_app .
-          python3 -c '
+          python3 -c "
           import os
-
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path):
-              with open(manifest_path, "r") as f:
-                  content = f.read()
-              perms = """
-              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-              <uses-permission android:name="android.permission.INTERNET" />
-          """
-              if "ACCESS_FINE_LOCATION" not in content:
-                  content = content.replace("<application", perms + "\n    <application", 1)
-                  with open(manifest_path, "w") as f:
-                      f.write(content)
-
-          '
+          p = \"android/app/src/main/AndroidManifest.xml\"
+          c = open(p).read()
+          perms = [
+              \"ACCESS_FINE_LOCATION\", \"ACCESS_COARSE_LOCATION\", \"INTERNET\",
+              \"FOREGROUND_SERVICE\", \"FOREGROUND_SERVICE_LOCATION\",
+              \"POST_NOTIFICATIONS\", \"WAKE_LOCK\",
+          ]
+          tags = \"\".join(\"    <uses-permission android:name=\\\"android.permission.%s\\\" />\\n\" % x for x in perms if (\"permission.\" + x + chr(34)) not in c)
+          intents = (
+              \"        <intent><action android:name=\\\"android.intent.action.VIEW\\\" /><data android:scheme=\\\"https\\\" /></intent>\\n\"
+              \"        <intent><action android:name=\\\"android.intent.action.VIEW\\\" /><data android:scheme=\\\"geo\\\" /></intent>\\n\"
+              \"        <intent><action android:name=\\\"android.intent.action.DIAL\\\" /><data android:scheme=\\\"tel\\\" /></intent>\\n\"
+          )
+          c = c.replace(\"<application\", tags + \"    <application\", 1)
+          if \"<queries>\" in c:
+              c = c.replace(\"<queries>\", \"<queries>\\n\" + intents, 1)
+          else:
+              c = c.replace(\"</manifest>\", \"    <queries>\\n\" + intents + \"    </queries>\\n</manifest>\", 1)
+          c = c.replace(\"android:label=\\\"rider_app\\\"\", \"android:label=\\\"Soko Rider\\\"\")
+          open(p, \"w\").write(c)
+          print(c)
+          "
 
       - name: Install Dependencies
         run: flutter pub get

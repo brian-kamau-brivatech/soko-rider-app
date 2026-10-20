@@ -5,6 +5,7 @@ class AppConfig {
   static const String odooDbName  = 'soko';
 
   // Soko Express Mtaani Shop (Nakuru CBD Pick-up Point)
+  static const String shopName = 'Soko Shop, Nakuru CBD';
   static const double shopLatitude  = -0.303099;
   static const double shopLongitude = 36.080026;
 

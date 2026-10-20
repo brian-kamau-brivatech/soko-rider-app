@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/odoo_service.dart';
-import 'orders_screen.dart';
+import '../widgets/common.dart';
+import 'home_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -37,7 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     final res = await _odooService.checkStatus(phone);
-
+    if (!mounted) return;
     setState(() => _isCheckingPhone = false);
 
     if (res['status'] == 'ready') {
@@ -57,8 +58,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final pin = _pinCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
 
-    if (pin.length < 4 || pin.length > 6) {
-      setState(() => _errorMessage = 'PIN must be 4 to 6 digits.');
+    if (pin.length < 4 || pin.length > 6 || int.tryParse(pin) == null) {
+      setState(() => _errorMessage = 'PIN must be 4 to 6 digits (numbers only).');
       return;
     }
 
@@ -81,18 +82,19 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     setState(() => _isCheckingPhone = true);
-    final success = await _odooService.login(phone, pin);
+    final error = await _odooService.login(phone, pin);
+    if (!mounted) return;
     setState(() => _isCheckingPhone = false);
 
-    if (success && mounted) {
+    if (error == null) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => OrdersScreen(odooService: _odooService),
+          builder: (_) => HomeShell(odooService: _odooService),
         ),
       );
-    } else if (mounted) {
-      setState(() => _errorMessage = 'Invalid PIN. Please try again.');
+    } else {
+      setState(() => _errorMessage = error);
     }
   }
 
@@ -113,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     width: 76,
                     height: 76,
                     decoration: BoxDecoration(
-                      color: sokoNavy,
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
@@ -123,8 +125,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                     ),
-                    child: const Center(
-                      child: Text('🛵', style: TextStyle(fontSize: 38)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Image.network(
+                        sokoLogoUrl,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Center(child: Text('🛵', style: TextStyle(fontSize: 38))),
+                      ),
                     ),
                   ),
                 ),
@@ -194,7 +201,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('Welcome, ${_riderName ?? "Rider"}!', style: const TextStyle(fontWeight: FontWeight.bold, color: sokoNavy)),
-                              Text(_needsPinCreation ? 'Create your secret 4-digit PIN' : 'Enter your 4-digit PIN', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
+                              Text(_needsPinCreation ? 'Create your secret PIN (4-6 digits)' : 'Enter your PIN', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
                             ],
                           ),
                         ),
@@ -208,7 +215,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.number,
                     maxLength: 6,
                     decoration: InputDecoration(
-                      labelText: _needsPinCreation ? 'Create 4-Digit PIN' : 'Enter PIN',
+                      labelText: _needsPinCreation ? 'Create PIN' : 'Enter PIN',
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),

@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
+import 'services/odoo_service.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const SokoRiderApp());
+  // Stay logged in: riders open straight to their home dashboard.
+  final service = OdooService();
+  final profile = await service.getSavedProfile();
+  runApp(SokoRiderApp(startHome: profile != null, service: service));
 }
 
 class SokoRiderApp extends StatelessWidget {
-  const SokoRiderApp({super.key});
+  final bool startHome;
+  final OdooService service;
+  const SokoRiderApp({super.key, required this.startHome, required this.service});
 
   // Official Soko Express Mtaani Brand Colors
   static const Color sokoNavy = Color(0xFF0C2340);
@@ -22,7 +30,7 @@ class SokoRiderApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+        scaffoldBackgroundColor: const Color(0xFFF4F5F7),
         colorScheme: ColorScheme.fromSeed(
           seedColor: sokoGreen,
           primary: sokoNavy,
@@ -53,9 +61,10 @@ class SokoRiderApp extends StatelessWidget {
             ),
           ),
         ),
-        fontFamily: 'Roboto',
+        // Same typeface as the Soko tracking page
+        textTheme: GoogleFonts.plusJakartaSansTextTheme(),
       ),
-      home: const LoginScreen(),
+      home: startHome ? HomeShell(odooService: service) : const LoginScreen(),
     );
   }
 }
