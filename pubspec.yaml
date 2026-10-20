@@ -1,0 +1,27 @@
+name: rider_app
+description: "Free Flutter Rider Mobile App for Odoo Live Delivery Tracking"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Odoo API & Networking
+  http: ^1.2.0
+  web_socket_channel: ^3.0.0
+  shared_preferences: ^2.2.2
+
+  # 100% Free GPS & Background Handling
+  geolocator: ^12.0.0
+  flutter_foreground_task: ^7.0.0
+
+  # 100% Free OpenStreetMap in Flutter (No Google Maps SDK)
+  flutter_map: ^7.0.0
+  latlong2: ^0.9.1
+
+flutter:
+  uses-material-design: true
