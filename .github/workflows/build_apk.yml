@@ -1,0 +1,75 @@
+name: Build Soko Rider APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Generate Android Scaffolding
+        run: |
+          flutter create --platforms=android --org=ke.co.sokoexpressmtaani .
+          python3 -c '
+          import os
+          path = "android/app/src/main/AndroidManifest.xml"
+          with open(path, "r") as f:
+              content = f.read()
+          perms = """
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+              <uses-permission android:name="android.permission.INTERNET" />
+          """
+          if "ACCESS_FINE_LOCATION" not in content:
+              content = content.replace("<manifest", "<manifest" + perms, 1)
+              with open(path, "w") as f:
+                  f.write(content)
+          '
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Compile Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Download Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Soko-Rider-App
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Create Release with Downloadable APK
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: v1.0.0
+          name: "Soko Express Rider v1.0.0 (Release)"
+          body: "Official Soko Express Mtaani Rider Android App (Live GPS Tracking & Odoo Integration)."
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

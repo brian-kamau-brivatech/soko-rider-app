@@ -1,19 +1,123 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config.dart';
 import '../models/delivery_order.dart';
 
 class OdooService {
-  String baseUrl;
-  String db;
-  String? _sessionCookie;
-  int? _uid;
+  final String baseUrl;
 
-  OdooService({required this.baseUrl, required this.db});
+  OdooService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.odooBaseUrl;
 
-  /// 1. Authenticate Rider with Odoo ERP (Free native JSON-RPC)
-  Future<bool> login(String login, String password) async {
-    final uri = Uri.parse('$baseUrl/web/session/authenticate');
+  /// 1. Check Rider Phone Registration & Approval Status
+  Future<Map<String, dynamic>> checkStatus(String phone) async {
+    final uri = Uri.parse('$baseUrl/api/rider/check_status');
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {'phone': phone.trim()}
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['result'] != null) {
+        return Map<String, dynamic>.from(data['result']);
+      }
+    } catch (e) {
+      print('Check Status Error: $e');
+    }
+    return {'status': 'error', 'message': 'Network error reaching Soko Server.'};
+  }
+
+  /// 2. Rider First-Time PIN Creation
+  Future<Map<String, dynamic>> createPin(String phone, String pin) async {
+    final uri = Uri.parse('$baseUrl/api/rider/create_pin');
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {'phone': phone.trim(), 'pin': pin.trim()}
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['result'] != null) {
+        return Map<String, dynamic>.from(data['result']);
+      }
+    } catch (e) {
+      print('Create PIN Error: $e');
+    }
+    return {'success': false, 'message': 'Network error setting PIN.'};
+  }
+
+  /// 3. Rider Phone + PIN Login
+  Future<bool> login(String phone, String pin) async {
+    final uri = Uri.parse('$baseUrl/api/rider/login');
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {'phone': phone.trim(), 'pin': pin.trim()}
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['result'] != null && data['result']['success'] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('rider_phone', phone.trim());
+        await prefs.setString('rider_pin', pin.trim());
+        await prefs.setString('rider_name', data['result']['name'] ?? 'Rider');
+        await prefs.setInt('rider_id', data['result']['rider_id'] ?? 0);
+        return true;
+      }
+    } catch (e) {
+      print('Rider Login Error: $e');
+    }
+    return false;
+  }
+
+  /// 4. Fetch assigned active delivery orders
+  Future<List<DeliveryOrder>> getAssignedDeliveries() async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = prefs.getString('rider_phone') ?? '';
+    final pin = prefs.getString('rider_pin') ?? '';
+
+    final uri = Uri.parse('$baseUrl/api/rider/assigned_orders');
+    try {
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {'phone': phone, 'pin': pin}
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['result'] != null && data['result']['success'] == true) {
+        final List ordersJson = data['result']['orders'] ?? [];
+        return ordersJson.map((item) => DeliveryOrder.fromOdooJson(item)).toList();
+      }
+    } catch (e) {
+      print('Fetch Assigned Orders Error: $e');
+    }
+    return [];
+  }
+
+  /// 5. Mark delivery completed in Odoo
+  Future<bool> markOrderDelivered(String trackingNo) async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = prefs.getString('rider_phone') ?? '';
+    final pin = prefs.getString('rider_pin') ?? '';
+
+    final uri = Uri.parse('$baseUrl/api/rider/update_status');
     try {
       final response = await http.post(
         uri,
@@ -21,103 +125,16 @@ class OdooService {
         body: jsonEncode({
           'jsonrpc': '2.0',
           'params': {
-            'db': db,
-            'login': login,
-            'password': password,
+            'phone': phone,
+            'pin': pin,
+            'tracking_no': trackingNo,
+            'status': 'delivered'
           }
         }),
       );
 
       final data = jsonDecode(response.body);
-      if (data['result'] != null && data['result']['uid'] != null) {
-        _uid = data['result']['uid'];
-        _sessionCookie = response.headers['set-cookie'];
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('cookie', _sessionCookie ?? '');
-        await prefs.setInt('uid', _uid ?? 0);
-        await prefs.setString('baseUrl', baseUrl);
-        await prefs.setString('db', db);
-        return true;
-      }
-    } catch (e) {
-      print('Odoo Login Error: $e');
-    }
-    return false;
-  }
-
-  /// 2. Fetch assigned deliveries for this rider
-  Future<List<DeliveryOrder>> getAssignedDeliveries() async {
-    final uri = Uri.parse('$baseUrl/web/dataset/call_kw');
-    try {
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (_sessionCookie != null) 'Cookie': _sessionCookie!,
-        },
-        body: jsonEncode({
-          'jsonrpc': '2.0',
-          'params': {
-            'model': 'stock.picking',
-            'method': 'search_read',
-            'args': [
-              [
-                ['state', 'in', ['assigned', 'confirmed']]
-              ]
-            ],
-            'kwargs': {
-              'fields': [
-                'id',
-                'name',
-                'partner_id',
-                'tracking_token',
-                'delivery_latitude',
-                'delivery_longitude',
-                'state'
-              ],
-              'limit': 20,
-            }
-          }
-        }),
-      );
-
-      final data = jsonDecode(response.body);
-      if (data['result'] != null) {
-        final List results = data['result'];
-        return results.map((item) => DeliveryOrder.fromOdooJson(item)).toList();
-      }
-    } catch (e) {
-      print('Fetch Deliveries Error: $e');
-    }
-    return [];
-  }
-
-  /// 3. Mark delivery as done in Odoo (Validates picking)
-  Future<bool> markOrderDelivered(int pickingId) async {
-    final uri = Uri.parse('$baseUrl/web/dataset/call_kw');
-    try {
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (_sessionCookie != null) 'Cookie': _sessionCookie!,
-        },
-        body: jsonEncode({
-          'jsonrpc': '2.0',
-          'params': {
-            'model': 'stock.picking',
-            'method': 'button_validate',
-            'args': [
-              [pickingId]
-            ],
-            'kwargs': {}
-          }
-        }),
-      );
-
-      final data = jsonDecode(response.body);
-      return data['result'] != null;
+      return data['result'] != null && data['result']['success'] == true;
     } catch (e) {
       print('Mark Delivered Error: $e');
     }

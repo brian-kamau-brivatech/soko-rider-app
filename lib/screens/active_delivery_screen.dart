@@ -30,6 +30,9 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   bool _isBroadcasting = false;
   bool _isCompleting = false;
 
+  static const Color sokoNavy = Color(0xFF0C2340);
+  static const Color sokoGreen = Color(0xFF3CA227);
+
   @override
   void initState() {
     super.initState();
@@ -38,13 +41,13 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
   Future<void> _startTracking() async {
     final started = await _locationService.startStreaming(
-      wsUrl: AppConfig.defaultWsBridgeUrl,
-      trackingToken: widget.order.trackingToken,
+      wsUrl: AppConfig.wsStreamUrl,
+      trackingToken: widget.order.trackingNo,
       onLocationUpdate: (Position pos) {
         if (!mounted) return;
         setState(() {
           _currentRiderPos = LatLng(pos.latitude, pos.longitude);
-          _currentSpeed = (pos.speed * 3.6); // convert m/s to km/h
+          _currentSpeed = (pos.speed * 3.6); // km/h
           _isBroadcasting = true;
         });
       },
@@ -59,7 +62,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
   Future<void> _completeDelivery() async {
     setState(() => _isCompleting = true);
-    final success = await widget.odooService.markOrderDelivered(widget.order.id);
+    final success = await widget.odooService.markOrderDelivered(widget.order.trackingNo);
     _locationService.stopStreaming();
 
     if (mounted) {
@@ -67,15 +70,16 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: const Text('🎉 Delivery Completed!'),
-            content: const Text('Order has been validated in Odoo ERP and customer notified.'),
+            content: Text('Order ${widget.order.trackingNo} has been marked as Delivered.\n\nPayout KSh ${widget.order.riderPayout.toStringAsFixed(0)} credited!'),
             actions: [
               TextButton(
                 onPressed: () {
                   Navigator.pop(ctx);
                   Navigator.pop(context);
                 },
-                child: const Text('Back to Orders'),
+                child: const Text('Back to Orders', style: TextStyle(fontWeight: FontWeight.bold, color: sokoGreen)),
               ),
             ],
           ),
@@ -101,137 +105,148 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.order.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        title: Text(widget.order.trackingNo, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
         backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF0F172A),
+        foregroundColor: sokoNavy,
         elevation: 0.5,
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // GPS Broadcasting Status Banner
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: const Color(0xFF0F172A),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: _isBroadcasting ? const Color(0xFF22C55E) : const Color(0xFFEAB308),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isBroadcasting ? 'GPS STREAMING LIVE' : 'CONNECTING GPS...',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
-                  ],
-                ),
-                Text(
-                  '${_currentSpeed.toStringAsFixed(1)} km/h',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'monospace'),
-                ),
-              ],
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: customerDest,
+              initialZoom: 14.5,
             ),
-          ),
-
-          // 100% Free OpenStreetMap via flutter_map
-          Expanded(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentRiderPos ?? customerDest,
-                initialZoom: 15.0,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'ke.co.sokoexpressmtaani.rider',
               ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.odoo.rider_app',
-                ),
-                MarkerLayer(
-                  markers: [
-                    // Customer Drop-off Pin
-                    Marker(
-                      point: customerDest,
-                      width: 40,
-                      height: 40,
-                      child: const Icon(Icons.location_on, color: Colors.red, size: 40),
-                    ),
-                    // Rider Realtime Pin
-                    if (_currentRiderPos != null)
-                      Marker(
-                        point: _currentRiderPos!,
-                        width: 44,
-                        height: 44,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2563EB),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 8),
-                            ],
-                          ),
-                          child: const Icon(Icons.navigation, color: Colors.white, size: 22),
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: customerDest,
+                    width: 100,
+                    height: 36,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: sokoNavy,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                      ),
+                      child: Center(
+                        child: Text(
+                          widget.order.customerName,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                  ],
-                ),
-              ],
-            ),
+                    ),
+                  ),
+                  if (_currentRiderPos != null)
+                    Marker(
+                      point: _currentRiderPos!,
+                      width: 44,
+                      height: 44,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: sokoGreen,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                        ),
+                        child: const Center(child: Text('🛵', style: TextStyle(fontSize: 20))),
+                      ),
+                    ),
+                ],
+              ),
+            ],
           ),
 
-          // Bottom Action Panel
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              boxShadow: [
-                BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -3)),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.order.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 2),
-                        Text(widget.order.deliveryAddress, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
-                      ],
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.phone, color: Color(0xFF2563EB)),
-                      onPressed: () {
-                        // Launch phone dialer
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: _isCompleting ? null : _completeDelivery,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF16A34A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          // Floating Live Status Card
+          Positioned(
+            bottom: 24,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 20, offset: const Offset(0, 4)),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: _isBroadcasting ? sokoGreen : Colors.orange,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _isBroadcasting ? 'Broadcasting GPS Live' : 'Connecting GPS...',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _isBroadcasting ? sokoGreen : Colors.orange),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '${_currentSpeed.toStringAsFixed(0)} km/h',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: sokoNavy),
+                      ),
+                    ],
                   ),
-                  child: _isCompleting
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('Mark as Delivered (Sync to Odoo)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('CUSTOMER', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                          Text(widget.order.customerName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: sokoNavy)),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text('YOUR PAYOUT', style: TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.bold)),
+                          Text('KSh ${widget.order.riderPayout.toStringAsFixed(0)}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: sokoGreen)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.check_circle, color: Colors.white),
+                      label: _isCompleting
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('Mark Order Delivered', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: sokoGreen,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: _isCompleting ? null : _completeDelivery,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../config.dart';
 import '../services/odoo_service.dart';
 import 'orders_screen.dart';
 
@@ -11,45 +10,89 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _serverUrlCtrl = TextEditingController(text: AppConfig.defaultOdooUrl);
-  final _dbCtrl = TextEditingController(text: AppConfig.defaultDatabase);
-  final _emailCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
+  final _odooService = OdooService();
+  final _phoneCtrl = TextEditingController();
+  final _pinCtrl = TextEditingController();
+  final _confirmPinCtrl = TextEditingController();
 
-  bool _isLoading = false;
+  bool _isCheckingPhone = false;
+  bool _phoneChecked = false;
+  bool _needsPinCreation = false;
+  String? _riderName;
   String? _errorMessage;
 
-  Future<void> _handleLogin() async {
+  static const Color sokoNavy = Color(0xFF0C2340);
+  static const Color sokoGreen = Color(0xFF3CA227);
+
+  Future<void> _checkPhone() async {
+    final phone = _phoneCtrl.text.trim();
+    if (phone.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your phone number.');
+      return;
+    }
+
     setState(() {
-      _isLoading = true;
+      _isCheckingPhone = true;
       _errorMessage = null;
     });
 
-    final odooService = OdooService(
-      baseUrl: _serverUrlCtrl.text.trim(),
-      db: _dbCtrl.text.trim(),
-    );
+    final res = await _odooService.checkStatus(phone);
 
-    final success = await odooService.login(
-      _emailCtrl.text.trim(),
-      _passCtrl.text.trim(),
-    );
+    setState(() => _isCheckingPhone = false);
 
-    setState(() {
-      _isLoading = false;
-    });
+    if (res['status'] == 'ready') {
+      setState(() {
+        _phoneChecked = true;
+        _needsPinCreation = res['needs_pin_creation'] == true;
+        _riderName = res['rider_name'];
+      });
+    } else {
+      setState(() {
+        _errorMessage = res['message'] ?? 'Could not verify account.';
+      });
+    }
+  }
+
+  Future<void> _submitPin() async {
+    final pin = _pinCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+
+    if (pin.length < 4 || pin.length > 6) {
+      setState(() => _errorMessage = 'PIN must be 4 to 6 digits.');
+      return;
+    }
+
+    if (_needsPinCreation) {
+      final confirm = _confirmPinCtrl.text.trim();
+      if (pin != confirm) {
+        setState(() => _errorMessage = 'PINs do not match.');
+        return;
+      }
+
+      setState(() => _isCheckingPhone = true);
+      final createRes = await _odooService.createPin(phone, pin);
+      if (createRes['success'] != true) {
+        setState(() {
+          _isCheckingPhone = false;
+          _errorMessage = createRes['message'] ?? 'Error saving PIN.';
+        });
+        return;
+      }
+    }
+
+    setState(() => _isCheckingPhone = true);
+    final success = await _odooService.login(phone, pin);
+    setState(() => _isCheckingPhone = false);
 
     if (success && mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => OrdersScreen(odooService: odooService),
+          builder: (_) => OrdersScreen(odooService: _odooService),
         ),
       );
     } else if (mounted) {
-      setState(() {
-        _errorMessage = 'Invalid Odoo credentials or server unreachable.';
-      });
+      setState(() => _errorMessage = 'Invalid PIN. Please try again.');
     }
   }
 
@@ -60,40 +103,42 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Logo Icon
+                // Soko Rider Badge
                 Center(
                   child: Container(
-                    width: 72,
-                    height: 72,
+                    width: 76,
+                    height: 76,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB),
-                      borderRadius: BorderRadius.circular(20),
+                      color: sokoNavy,
+                      borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF2563EB).withOpacity(0.3),
-                          blurRadius: 16,
+                          color: sokoNavy.withOpacity(0.25),
+                          blurRadius: 18,
                           offset: const Offset(0, 8),
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.local_shipping, size: 36, color: Colors.white),
+                    child: const Center(
+                      child: Text('🛵', style: TextStyle(fontSize: 38)),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 const Text(
-                  'Rider Delivery App',
+                  'Soko Express Mtaani',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: sokoNavy),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 const Text(
-                  'Log in with your Odoo ERP account',
+                  'Rider Delivery & Telematics Portal',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: Color(0xFF64748B)),
+                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                 ),
                 const SizedBox(height: 32),
 
@@ -103,53 +148,107 @@ class _LoginScreenState extends State<LoginScreen> {
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFEE2E2),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(_errorMessage!, style: const TextStyle(color: Color(0xFFDC2626), fontSize: 13)),
                   ),
 
-                TextField(
-                  controller: _serverUrlCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Odoo Server URL',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    prefixIcon: const Icon(Icons.cloud_outlined),
+                if (!_phoneChecked) ...[
+                  TextField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    decoration: InputDecoration(
+                      labelText: 'Registered Phone Number',
+                      hintText: 'e.g. 0712345678',
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      prefixIcon: const Icon(Icons.phone_android, color: sokoNavy),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    labelText: 'Rider Email',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    prefixIcon: const Icon(Icons.email_outlined),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: _isCheckingPhone ? null : _checkPhone,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: sokoNavy,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: _isCheckingPhone
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : const Text('Continue', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _passCtrl,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    prefixIcon: const Icon(Icons.lock_outline),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEBF7E7),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.verified, color: sokoGreen, size: 28),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Welcome, ${_riderName ?? "Rider"}!', style: const TextStyle(fontWeight: FontWeight.bold, color: sokoNavy)),
+                              Text(_needsPinCreation ? 'Create your secret 4-digit PIN' : 'Enter your 4-digit PIN', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
-
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _handleLogin,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2563EB),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _pinCtrl,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration: InputDecoration(
+                      labelText: _needsPinCreation ? 'Create 4-Digit PIN' : 'Enter PIN',
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      prefixIcon: const Icon(Icons.lock_outline, color: sokoGreen),
+                    ),
                   ),
-                  child: _isLoading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text('Sign In to Deliveries', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
+                  if (_needsPinCreation) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _confirmPinCtrl,
+                      obscureText: true,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm PIN',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                        prefixIcon: const Icon(Icons.lock_reset, color: sokoGreen),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: _isCheckingPhone ? null : _submitPin,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: sokoGreen,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: _isCheckingPhone
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : Text(_needsPinCreation ? 'Activate & Login' : 'Login to Deliveries', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: () => setState(() => _phoneChecked = false),
+                    child: const Text('Change Phone Number', style: TextStyle(color: Color(0xFF64748B))),
+                  ),
+                ],
               ],
             ),
           ),

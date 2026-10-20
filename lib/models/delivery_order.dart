@@ -1,43 +1,46 @@
 class DeliveryOrder {
   final int id;
-  final String name;
+  final String trackingNo;
+  final String saleOrder;
   final String customerName;
   final String customerPhone;
-  final String deliveryAddress;
-  final String trackingToken;
+  final String deliveryArea;
+  final String status;
   final double destLat;
   final double destLng;
-  final String state;
+  final double distanceKm;
+  final double riderPayout;
+  final double amountTotal;
 
   DeliveryOrder({
     required this.id,
-    required this.name,
+    required this.trackingNo,
+    required this.saleOrder,
     required this.customerName,
     required this.customerPhone,
-    required this.deliveryAddress,
-    required this.trackingToken,
+    required this.deliveryArea,
+    required this.status,
     required this.destLat,
     required this.destLng,
-    required this.state,
+    required this.distanceKm,
+    required this.riderPayout,
+    required this.amountTotal,
   });
 
   factory DeliveryOrder.fromOdooJson(Map<String, dynamic> json) {
-    final partner = json['partner_id'];
-    String custName = 'Customer';
-    if (partner is List && partner.length > 1) {
-      custName = partner[1].toString();
-    }
-
     return DeliveryOrder(
       id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      customerName: custName,
-      customerPhone: json['partner_phone'] ?? '',
-      deliveryAddress: json['delivery_address'] ?? 'Customer Address',
-      trackingToken: json['tracking_token'] ?? '',
-      destLat: (json['delivery_latitude'] is num) ? (json['delivery_latitude'] as num).toDouble() : -1.286389,
-      destLng: (json['delivery_longitude'] is num) ? (json['delivery_longitude'] as num).toDouble() : 36.817223,
-      state: json['state'] ?? 'assigned',
+      trackingNo: json['tracking_no'] ?? '',
+      saleOrder: json['sale_order'] ?? '',
+      customerName: json['customer_name'] ?? 'Customer',
+      customerPhone: json['customer_phone'] ?? '',
+      deliveryArea: json['delivery_area'] ?? 'Nakuru',
+      status: json['status'] ?? 'preparing',
+      destLat: (json['customer_lat'] is num) ? (json['customer_lat'] as num).toDouble() : -0.298000,
+      destLng: (json['customer_lng'] is num) ? (json['customer_lng'] as num).toDouble() : 36.095000,
+      distanceKm: (json['delivery_distance_km'] is num) ? (json['delivery_distance_km'] as num).toDouble() : 4.2,
+      riderPayout: (json['rider_payout'] is num) ? (json['rider_payout'] as num).toDouble() : 120.0,
+      amountTotal: (json['amount_total'] is num) ? (json['amount_total'] as num).toDouble() : 0.0,
     );
   }
 }

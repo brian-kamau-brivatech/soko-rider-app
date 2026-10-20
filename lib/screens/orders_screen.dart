@@ -15,6 +15,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<DeliveryOrder> _orders = [];
   bool _isLoading = true;
 
+  static const Color sokoNavy = Color(0xFF0C2340);
+  static const Color sokoGreen = Color(0xFF3CA227);
+
   @override
   void initState() {
     super.initState();
@@ -35,9 +38,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: const Text('Assigned Deliveries', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text('My Deliveries', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
         backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF0F172A),
+        foregroundColor: sokoNavy,
         elevation: 0.5,
         actions: [
           IconButton(
@@ -47,33 +50,40 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: sokoGreen))
           : _orders.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.check_circle_outline, size: 64, color: Color(0xFF94A3B8)),
+                      const Text('🛵', style: TextStyle(fontSize: 54)),
                       const SizedBox(height: 12),
-                      const Text('No pending deliveries', style: TextStyle(fontSize: 16, color: Color(0xFF64748B))),
-                      const SizedBox(height: 16),
-                      ElevatedButton(onPressed: _loadOrders, child: const Text('Refresh')),
+                      const Text('No Active Deliveries', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: sokoNavy)),
+                      const SizedBox(height: 4),
+                      const Text('New orders assigned to you will appear here.', style: TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+                      const SizedBox(height: 18),
+                      ElevatedButton(
+                        onPressed: _loadOrders,
+                        style: ElevatedButton.styleFrom(backgroundColor: sokoNavy),
+                        child: const Text('Check for New Orders', style: TextStyle(color: Colors.white)),
+                      ),
                     ],
                   ),
                 )
               : RefreshIndicator(
                   onRefresh: _loadOrders,
+                  color: sokoGreen,
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: _orders.length,
                     itemBuilder: (context, index) {
                       final order = _orders[index];
                       return Card(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 1,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        elevation: 1.5,
                         margin: const EdgeInsets.only(bottom: 16),
                         child: Padding(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(18),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -81,28 +91,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFEFF6FF),
-                                      borderRadius: BorderRadius.circular(6),
+                                      color: const Color(0xFFEBF7E7),
+                                      borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Text(
-                                      order.name,
-                                      style: const TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold, fontSize: 12),
+                                      order.trackingNo,
+                                      style: const TextStyle(color: sokoGreen, fontWeight: FontWeight.bold, fontSize: 12),
                                     ),
                                   ),
-                                  const Text('Ready for Dispatch', style: TextStyle(fontSize: 12, color: Color(0xFF16A34A), fontWeight: FontWeight.bold)),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEFF6FF),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      'Payout: KSh ${order.riderPayout.toStringAsFixed(0)}',
+                                      style: const TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold, fontSize: 12),
+                                    ),
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
-                              Text(order.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 14),
+                              Text(order.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: sokoNavy)),
                               const SizedBox(height: 4),
                               Row(
                                 children: [
-                                  const Icon(Icons.location_on_outlined, size: 16, color: Color(0xFF64748B)),
+                                  const Icon(Icons.location_on, size: 16, color: Color(0xFF64748B)),
                                   const SizedBox(width: 4),
                                   Expanded(
-                                    child: Text(order.deliveryAddress, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+                                    child: Text('${order.deliveryArea} (${order.distanceKm.toStringAsFixed(1)} KM road distance)', style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
                                   ),
                                 ],
                               ),
@@ -110,13 +130,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                               SizedBox(
                                 width: double.infinity,
                                 child: ElevatedButton.icon(
-                                  icon: const Icon(Icons.navigation),
-                                  label: const Text('Start Delivery & Broadcast GPS'),
+                                  icon: const Icon(Icons.navigation, color: Colors.white),
+                                  label: const Text('Start Delivery & Broadcast GPS', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF2563EB),
-                                    foregroundColor: Colors.white,
+                                    backgroundColor: sokoNavy,
                                     padding: const EdgeInsets.symmetric(vertical: 14),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                                   ),
                                   onPressed: () {
                                     Navigator.push(
