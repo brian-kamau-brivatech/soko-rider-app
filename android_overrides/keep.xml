@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The chime is only referenced from native code by name; stop release builds from removing it. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/soko_request" />

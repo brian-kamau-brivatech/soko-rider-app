@@ -64,6 +64,23 @@ jobs:
             cp "$d/ic_launcher.png" "android/app/src/main/res/$(basename "$d")/ic_launcher.png"
           done
 
+      - name: Soko request sound and notification channel
+        run: |
+          mkdir -p android/app/src/main/res/raw
+          cp assets/sound/soko_request.wav android/app/src/main/res/raw/soko_request.wav
+          cp android_overrides/keep.xml android/app/src/main/res/raw/keep.xml
+          MAIN=$(find android/app/src/main -name MainActivity.kt | head -1)
+          echo "Replacing $MAIN"
+          cp android_overrides/MainActivity.kt "$MAIN"
+          python3 -c "
+          p = \"android/app/src/main/AndroidManifest.xml\"
+          c = open(p).read()
+          meta = \"        <meta-data android:name=\\\"com.google.firebase.messaging.default_notification_channel_id\\\" android:value=\\\"soko_requests\\\" />\\n\"
+          if \"default_notification_channel_id\" not in c:
+              c = c.replace(\"</application>\", meta + \"    </application>\", 1)
+          open(p, \"w\").write(c)
+          "
+
       - name: Use fixed signing key (so the app updates without uninstalling)
         env:
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
