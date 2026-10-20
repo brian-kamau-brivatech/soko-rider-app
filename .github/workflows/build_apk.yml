@@ -53,6 +53,9 @@ jobs:
           if os.path.exists(bg_path):
               with open(bg_path, "r") as f:
                   bg = f.read()
+              bg = bg.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 34\n    compileSdkVersion 34")
+              bg = bg.replace("minSdk = flutter.minSdkVersion", "minSdk = 21\n        minSdkVersion 21")
+              bg = bg.replace("targetSdk = flutter.targetSdkVersion", "targetSdk = 34\n        targetSdkVersion 34")
               bg = bg.replace("minSdkVersion 16", "minSdkVersion 21").replace("minSdkVersion 19", "minSdkVersion 21")
               bg = bg.replace("minSdk = 16", "minSdk = 21").replace("minSdk = 19", "minSdk = 21")
               with open(bg_path, "w") as f:
