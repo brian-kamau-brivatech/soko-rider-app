@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import '../config.dart';
 import '../models/delivery_order.dart';
 import '../services/location_stream_service.dart';
+import '../services/presence_service.dart';
 import '../services/rider_data.dart';
 import '../widgets/common.dart';
 import '../widgets/order_card.dart';
@@ -10,9 +11,16 @@ import '../widgets/order_card.dart';
 /// Rider home ("Delivery Hub"). Every number on it comes from the Soko server.
 class DashboardScreen extends StatefulWidget {
   final RiderData data;
+  final PresenceService presence;
   final Future<void> Function(DeliveryOrder) onOpen;
   final VoidCallback onSeeOrders;
-  const DashboardScreen({super.key, required this.data, required this.onOpen, required this.onSeeOrders});
+  const DashboardScreen({
+    super.key,
+    required this.data,
+    required this.presence,
+    required this.onOpen,
+    required this.onSeeOrders,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -54,7 +62,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: widget.data,
+      animation: Listenable.merge([widget.data, widget.presence]),
       builder: (context, _) {
         final d = widget.data;
         return SafeArea(
@@ -68,6 +76,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 _header(d),
                 const SizedBox(height: 18),
+                _onlineCard(),
+                const SizedBox(height: 14),
                 _searchBar(d),
                 const SizedBox(height: 18),
                 if (_query.trim().isNotEmpty) ..._searchResults() else ..._home(d),
@@ -122,6 +132,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Big Online / Offline switch for dispatch requests.
+  Widget _onlineCard() {
+    final p = widget.presence;
+    final on = p.online;
+    final subtitle = p.error ??
+        (on
+            ? (p.distanceFromShopKm != null
+                ? 'Receiving requests · ${p.distanceFromShopKm!.toStringAsFixed(1)} km from the shop'
+                : 'Receiving delivery requests')
+            : 'Go online to receive delivery requests');
+    return Material(
+      color: on ? SokoColors.green : SokoColors.ink,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: p.busy ? null : p.toggle,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 12, 14),
+          child: Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: on ? Colors.white : const Color(0xFF6B7280),
+                  shape: BoxShape.circle,
+                  boxShadow: on ? [BoxShadow(color: Colors.white.withOpacity(0.7), blurRadius: 8)] : null,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(on ? 'You are Online' : 'You are Offline',
+                        style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: p.error != null ? const Color(0xFFFECACA) : Colors.white.withOpacity(0.8), fontSize: 12.5)),
+                  ],
+                ),
+              ),
+              p.busy
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)),
+                    )
+                  : Switch(
+                      value: on,
+                      onChanged: (_) => p.toggle(),
+                      activeColor: Colors.white,
+                      activeTrackColor: Colors.white.withOpacity(0.35),
+                    ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

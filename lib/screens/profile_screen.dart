@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import '../services/presence_service.dart';
+import '../services/push_service.dart';
 import '../services/rider_data.dart';
 import '../widgets/common.dart';
 import 'login_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final RiderData data;
-  const ProfileScreen({super.key, required this.data});
+  final PresenceService presence;
+  const ProfileScreen({super.key, required this.data, required this.presence});
 
   Future<void> _logout(BuildContext context) async {
     final ok = await showDialog<bool>(
@@ -20,6 +23,7 @@ class ProfileScreen extends StatelessWidget {
       ),
     );
     if (ok != true) return;
+    if (presence.online) await presence.goOffline();
     await data.service.logout();
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false);
@@ -28,7 +32,7 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: data,
+      animation: Listenable.merge([data, presence]),
       builder: (context, _) {
         final p = data.profile;
         final vehicle = [p?.vehicleType ?? '', p?.vehicleRegNo ?? ''].where((s) => s.isNotEmpty).map((s) => s.toUpperCase()).join(' · ');
@@ -75,6 +79,10 @@ class ProfileScreen extends StatelessWidget {
                       data.active == null ? 'Checking…' : (data.active!.ok ? 'Connected' : (data.active!.error ?? 'Error'))),
                   const Divider(height: 1),
                   _row(Icons.gps_fixed, 'GPS', data.gpsProblem == null ? 'Ready' : 'Needs attention'),
+                  const Divider(height: 1),
+                  _row(Icons.wifi_tethering, 'Dispatch', presence.online ? 'Online' : 'Offline'),
+                  const Divider(height: 1),
+                  _row(Icons.notifications_active_outlined, 'Request alerts', PushService.instance.status ?? '—'),
                 ]),
               ),
               const SizedBox(height: 22),

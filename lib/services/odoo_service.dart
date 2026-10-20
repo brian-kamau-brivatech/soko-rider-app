@@ -192,6 +192,76 @@ class OdooService {
     }
   }
 
+  // ------------------------------------------------------------ dispatch
+
+  /// Switch Online/Offline for dispatch. Returns null on success or an error.
+  Future<String?> setOnline(bool online, {double? lat, double? lng}) async {
+    try {
+      final res = await _call('/api/rider/set_online', {
+        ...await _creds(),
+        'online': online,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+      });
+      if (res['success'] == true) return null;
+      return _s(res['message']).isEmpty ? 'Could not change status.' : _s(res['message']);
+    } on OdooCallError catch (e) {
+      return e.statusCode == 404 ? 'Soko server needs the Rider Dispatch update.' : e.message;
+    }
+  }
+
+  /// Tell Soko the rider is still online and where they are.
+  /// Returns the server reply, or null if it failed.
+  Future<Map<String, dynamic>?> heartbeat({double? lat, double? lng, double? accuracy}) async {
+    try {
+      final res = await _call('/api/rider/heartbeat', {
+        ...await _creds(),
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (accuracy != null) 'accuracy': accuracy,
+      });
+      return res['success'] == true ? res : null;
+    } on OdooCallError {
+      return null;
+    }
+  }
+
+  /// Delivery requests waiting for this rider's answer.
+  Future<List<DispatchOffer>?> getOffers() async {
+    try {
+      final res = await _call('/api/rider/offers', await _creds());
+      if (res['success'] != true) return null;
+      final List list = (res['offers'] is List) ? res['offers'] as List : const [];
+      return list.whereType<Map>().map((m) => DispatchOffer.fromJson(Map<String, dynamic>.from(m))).toList();
+    } on OdooCallError {
+      return null;
+    }
+  }
+
+  /// Accept or decline a request. Returns null on success, or a message.
+  Future<String?> respondOffer(int offerId, bool accept, {String? reason}) async {
+    try {
+      final res = await _call('/api/rider/offer_respond', {
+        ...await _creds(),
+        'offer_id': offerId,
+        'accept': accept,
+        if (reason != null) 'reason': reason,
+      });
+      if (res['success'] == true) return null;
+      return _s(res['message']).isEmpty ? 'Could not send your answer.' : _s(res['message']);
+    } on OdooCallError catch (e) {
+      return e.message;
+    }
+  }
+
+  Future<void> registerPushToken(String token) async {
+    try {
+      await _call('/api/rider/register_push', {...await _creds(), 'token': token});
+    } on OdooCallError {
+      // Not fatal: the app still checks for requests itself while online.
+    }
+  }
+
   /// Order ids the rider has already seen (for the bell's "new order" dot).
   Future<Set<int>> getSeenOrderIds() async {
     final prefs = await SharedPreferences.getInstance();
@@ -222,6 +292,26 @@ class OdooService {
   }
 
   static String _s(dynamic v) => (v == null || v == false) ? '' : v.toString();
+}
+
+/// A delivery request from Soko dispatch waiting for accept/decline.
+class DispatchOffer {
+  final int id;
+  final int secondsLeft;
+  final double? riderDistanceKm;
+  final DeliveryOrder order;
+  final DateTime receivedAt;
+  DispatchOffer({required this.id, required this.secondsLeft, required this.riderDistanceKm, required this.order})
+      : receivedAt = DateTime.now();
+
+  DateTime get expiresAt => receivedAt.add(Duration(seconds: secondsLeft));
+
+  factory DispatchOffer.fromJson(Map<String, dynamic> j) => DispatchOffer(
+        id: (j['offer_id'] is int) ? j['offer_id'] as int : 0,
+        secondsLeft: (j['seconds_left'] is num) ? (j['seconds_left'] as num).toInt() : 0,
+        riderDistanceKm: (j['rider_distance_km'] is num) ? (j['rider_distance_km'] as num).toDouble() : null,
+        order: DeliveryOrder.fromOdooJson(j['order'] is Map ? Map<String, dynamic>.from(j['order']) : const {}),
+      );
 }
 
 class OdooCallError implements Exception {

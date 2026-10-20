@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import '../config.dart';
 import '../models/delivery_order.dart';
 import '../services/odoo_service.dart';
+import '../services/presence_service.dart';
+import '../services/push_service.dart';
 import '../services/rider_data.dart';
 import '../widgets/common.dart';
 import 'active_delivery_screen.dart';
 import 'dashboard_screen.dart';
+import 'offer_screen.dart';
 import 'orders_screen.dart';
 import 'profile_screen.dart';
 
@@ -19,7 +23,9 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   late final RiderData _data = RiderData(widget.odooService);
+  late final PresenceService _presence = PresenceService(widget.odooService);
   int _tab = 0; // 0 home, 1 orders, 2 profile
+  bool _offerOpen = false;
 
   @override
   void initState() {
@@ -27,19 +33,54 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _data.refresh();
     _data.startAutoRefresh();
+    _presence.onNewOffer = _showOffer;
+    PushService.instance.onDispatchPush = _presence.checkOffers;
+    _presence.restore();
+    PushService.instance.registerWith(widget.odooService);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PushService.instance.onDispatchPush = null;
+    _presence.dispose();
     _data.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Re-check orders and GPS after the rider returns from another app/settings.
-    if (state == AppLifecycleState.resumed) _data.refresh();
+    // Re-check orders, requests and GPS after the rider returns to the app.
+    if (state == AppLifecycleState.resumed) {
+      _data.refresh();
+      _presence.checkOffers();
+    }
+  }
+
+  Future<void> _showOffer(DispatchOffer offer) async {
+    if (_offerOpen || !mounted) return;
+    _offerOpen = true;
+    final accepted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => OfferScreen(offer: offer, presence: _presence)),
+    );
+    _offerOpen = false;
+    if (!mounted) return;
+    await _data.refresh();
+    if (!mounted) return;
+    if (accepted == true) {
+      _go(0);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Order ${offer.order.trackingNo} is yours. Head to the shop to pick it up.'),
+        action: SnackBarAction(label: 'Navigate', onPressed: () => openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude)),
+      ));
+    }
+    // Another request may be waiting.
+    for (final o in _presence.offers) {
+      if (o.id != offer.id && o.expiresAt.isAfter(DateTime.now())) {
+        _showOffer(o);
+        break;
+      }
+    }
   }
 
   void _go(int tab) {
@@ -66,6 +107,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   Future<void> _checkNew() async {
     final before = _data.activeOrders.map((o) => o.id).toSet();
+    await _presence.checkOffers();
     await _data.refresh();
     if (!mounted) return;
     final msg = !(_data.active?.ok ?? false)
@@ -86,9 +128,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       body: IndexedStack(
         index: _tab,
         children: [
-          DashboardScreen(data: _data, onOpen: openTracking, onSeeOrders: () => _go(1)),
+          DashboardScreen(data: _data, presence: _presence, onOpen: openTracking, onSeeOrders: () => _go(1)),
           OrdersScreen(data: _data, onOpen: openTracking),
-          ProfileScreen(data: _data),
+          ProfileScreen(data: _data, presence: _presence),
         ],
       ),
       bottomNavigationBar: SafeArea(

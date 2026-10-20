@@ -28,6 +28,11 @@ dependencies:
   # Plus Jakarta Sans (same font as the Soko website tracking page)
   google_fonts: ^6.2.1
 
+  # Delivery requests: push alerts + ringing accept screen
+  firebase_core: ">=3.6.0 <5.0.0"
+  firebase_messaging: ">=15.1.0 <17.0.0"
+  flutter_ringtone_player: ^4.0.0
+
 flutter:
   uses-material-design: true
   assets:

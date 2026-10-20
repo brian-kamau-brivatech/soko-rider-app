@@ -3,10 +3,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'services/odoo_service.dart';
+import 'services/push_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Stay logged in: riders open straight to their home dashboard.
+  // Push alerts for delivery requests (skipped if this build has no Firebase keys).
+  await PushService.instance.init();
   final service = OdooService();
   final profile = await service.getSavedProfile();
   runApp(SokoRiderApp(startHome: profile != null, service: service));

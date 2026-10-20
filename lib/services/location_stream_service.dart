@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 import 'package:geolocator/geolocator.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import '../config.dart';
+import 'location_hub.dart';
 
 /// What the rider sees about their live tracking.
 enum LiveStatus {
@@ -15,13 +14,14 @@ enum LiveStatus {
   reconnecting, // server connection dropped; retrying, GPS still running
 }
 
-/// Streams the phone's real GPS to the Soko WebSocket bridge.
+/// Streams the phone's real GPS to the Soko WebSocket bridge during a delivery.
 ///
-/// On Android it runs as a foreground service (ongoing "Soko tracking active"
-/// notification), so tracking keeps going when the screen is off or the rider
-/// switches apps. If the connection drops it reconnects and resends the
-/// latest position.
+/// GPS comes from [LocationHub] in precise mode (foreground service on
+/// Android, keeps working with the screen off). If the connection drops it
+/// reconnects and resends the latest position.
 class LocationStreamService {
+  static const _holder = 'delivery';
+
   WebSocketChannel? _channel;
   StreamSubscription<Position>? _positionSub;
   StreamSubscription? _wsSub;
@@ -75,38 +75,23 @@ class LocationStreamService {
 
     unawaited(_connect());
 
-    _positionSub = Geolocator.getPositionStream(locationSettings: _settings()).listen(
+    final hub = LocationHub.instance;
+    _positionSub = hub.positions.listen(
       (Position position) {
         _lastPosition = position;
         _onPosition?.call(position);
         _send(position);
       },
-      onError: (e) {
-        // GPS switched off mid-delivery, permission revoked, etc.
-        _emit(LiveStatus.gpsOff);
-      },
+      onError: (_) => _emit(LiveStatus.gpsOff),
     );
-    return LiveStatus.connecting;
-  }
-
-  LocationSettings _settings() {
-    if (Platform.isAndroid) {
-      return AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: AppConfig.gpsDistanceFilterMeters,
-        intervalDuration: const Duration(seconds: AppConfig.gpsIntervalSeconds),
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Soko delivery in progress',
-          notificationText: 'Your location is being shared with the customer.',
-          enableWakeLock: true,
-          setOngoing: true,
-        ),
-      );
+    await hub.hold(_holder, precise: true);
+    // Show the last known fix straight away (e.g. rider was already Online).
+    final last = hub.last;
+    if (last != null && _running) {
+      _lastPosition = last;
+      _onPosition?.call(last);
     }
-    return const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: AppConfig.gpsDistanceFilterMeters,
-    );
+    return LiveStatus.connecting;
   }
 
   Future<void> _connect() async {
@@ -127,7 +112,6 @@ class LocationStreamService {
         onError: (_) => _onDisconnected(),
         cancelOnError: true,
       );
-      // Push the latest fix straight away so the map updates immediately.
       if (_lastPosition != null) {
         _send(_lastPosition!);
       } else {
@@ -186,5 +170,6 @@ class LocationStreamService {
     _wsConnected = false;
     _onStatus = null;
     _onPosition = null;
+    LocationHub.instance.release(_holder);
   }
 }
