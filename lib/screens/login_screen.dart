@@ -109,41 +109,17 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Soko Rider Badge
-                Center(
-                  child: Container(
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: sokoNavy.withOpacity(0.25),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Image.network(
-                        sokoLogoUrl,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Center(child: Text('🛵', style: TextStyle(fontSize: 38))),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
+                // Soko Express Mtaani logo
+                Image.asset(sokoLogoAsset, height: 96, fit: BoxFit.contain),
+                const SizedBox(height: 18),
                 const Text(
-                  'Soko Express Mtaani',
+                  'Rider App',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: sokoNavy),
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Rider Delivery & Telematics Portal',
+                  'Deliveries & live GPS tracking',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                 ),

@@ -88,12 +88,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: SokoColors.line)),
           child: ClipOval(
             child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Image.network(
-                sokoLogoUrl,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.delivery_dining_outlined, color: SokoColors.ink),
-              ),
+              padding: const EdgeInsets.all(3),
+              child: Image.asset(sokoLogoMarkAsset, fit: BoxFit.contain),
             ),
           ),
         ),

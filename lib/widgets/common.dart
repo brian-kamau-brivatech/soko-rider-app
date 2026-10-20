@@ -17,7 +17,9 @@ class SokoColors {
   static const Color background = Color(0xFFF4F5F7);
 }
 
-const sokoLogoUrl = 'https://sokoexpressmtaani.co.ke/theme_soko/static/src/img/logo.png';
+/// Bundled Soko Express Mtaani logo (works offline).
+const sokoLogoAsset = 'assets/logo.png';
+const sokoLogoMarkAsset = 'assets/logo_mark.png';
 
 /// "KSh 1,250.00" or "—" when the server did not send a value.
 String formatKsh(double? v, {bool decimals = false}) {

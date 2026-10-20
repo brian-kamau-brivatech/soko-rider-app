@@ -57,6 +57,28 @@ jobs:
           print(c)
           "
 
+      - name: Soko launcher icon
+        run: |
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          for d in assets/icon/mipmap-*; do
+            cp "$d/ic_launcher.png" "android/app/src/main/res/$(basename "$d")/ic_launcher.png"
+          done
+
+      - name: Use fixed signing key (so the app updates without uninstalling)
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            for dir in "$HOME/.android" "${ANDROID_USER_HOME:-}"; do
+              [ -z "$dir" ] && continue
+              mkdir -p "$dir"
+              echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$dir/debug.keystore"
+            done
+            echo "Signing with the fixed Soko Rider key"
+          else
+            echo "::warning::DEBUG_KEYSTORE_BASE64 secret is not set. The APK is signed with a random key, so phones must uninstall the old app before installing this one."
+          fi
+
       - name: Install Dependencies
         run: flutter pub get
 
