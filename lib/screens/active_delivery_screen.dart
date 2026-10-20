@@ -184,9 +184,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  retinaMode: RetinaMode.isHighDensity(context),
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'ke.co.sokoexpressmtaani.rider_app',
                 ),
                 if (_riderPos != null)
@@ -230,7 +228,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 ),
                 const RichAttributionWidget(
                   alignment: AttributionAlignment.bottomLeft,
-                  attributions: [TextSourceAttribution('OpenStreetMap contributors'), TextSourceAttribution('CARTO')],
+                  attributions: [TextSourceAttribution('OpenStreetMap contributors')],
                 ),
               ],
             ),
