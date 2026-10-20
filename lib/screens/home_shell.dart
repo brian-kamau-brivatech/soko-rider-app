@@ -8,6 +8,7 @@ import '../services/rider_data.dart';
 import '../widgets/common.dart';
 import 'active_delivery_screen.dart';
 import 'dashboard_screen.dart';
+import 'earnings_screen.dart';
 import 'offer_screen.dart';
 import 'orders_screen.dart';
 import 'profile_screen.dart';
@@ -24,7 +25,8 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   late final RiderData _data = RiderData(widget.odooService);
   late final PresenceService _presence = PresenceService(widget.odooService);
-  int _tab = 0; // 0 home, 1 orders, 2 profile
+  int _tab = 0; // 0 home, 1 orders, 2 profile, 3 earnings
+  final _earningsTick = ValueNotifier<int>(0);
   bool _offerOpen = false;
 
   @override
@@ -43,6 +45,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushService.instance.onDispatchPush = null;
+    _earningsTick.dispose();
     _presence.dispose();
     _data.dispose();
     super.dispose();
@@ -84,6 +87,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   }
 
   void _go(int tab) {
+    if (tab == 3) _earningsTick.value++;
     setState(() => _tab = tab);
     if (tab == 1) _data.markAllSeen();
   }
@@ -94,15 +98,6 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => ActiveDeliveryScreen(order: order, odooService: widget.odooService)),
     );
     _data.refresh();
-  }
-
-  Future<void> _track() async {
-    final current = _data.current;
-    if (current == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No active delivery to track.')));
-      return;
-    }
-    await openTracking(current);
   }
 
   Future<void> _checkNew() async {
@@ -131,6 +126,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           DashboardScreen(data: _data, presence: _presence, onOpen: openTracking, onSeeOrders: () => _go(1)),
           OrdersScreen(data: _data, onOpen: openTracking),
           ProfileScreen(data: _data, presence: _presence),
+          EarningsScreen(odooService: widget.odooService, refreshTick: _earningsTick),
         ],
       ),
       bottomNavigationBar: SafeArea(
@@ -181,7 +177,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              _NavItem(icon: Icons.near_me_outlined, active: Icons.near_me, label: 'Track', selected: false, onTap: _track),
+              _NavItem(icon: Icons.account_balance_wallet_outlined, active: Icons.account_balance_wallet, label: 'Earnings', selected: _tab == 3, onTap: () => _go(3)),
               _NavItem(icon: Icons.person_outline, active: Icons.person, label: 'Profile', selected: _tab == 2, onTap: () => _go(2)),
             ],
           ),

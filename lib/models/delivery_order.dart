@@ -19,6 +19,11 @@ class DeliveryOrder {
   final DateTime? createdAt;
   final DateTime? pickedAt;
   final DateTime? deliveredAt;
+  final DateTime? riderPickupAt;
+  final bool phoneHidden; // phone exists but is shown only after the shop dispatches
+  final String payoutState; // unpaid | paid
+  final String payoutRef;
+  final DateTime? paidDate;
 
   DeliveryOrder({
     required this.id,
@@ -37,7 +42,15 @@ class DeliveryOrder {
     this.createdAt,
     this.pickedAt,
     this.deliveredAt,
+    this.riderPickupAt,
+    this.phoneHidden = false,
+    this.payoutState = 'unpaid',
+    this.payoutRef = '',
+    this.paidDate,
   });
+
+  bool get isPaid => payoutState == 'paid';
+  bool get isOutForDelivery => _statusKey == 'out_for_delivery';
 
   /// Website checkout requires a map location, so a valid order always has one.
   bool get hasLocation =>
@@ -93,6 +106,11 @@ class DeliveryOrder {
       createdAt: _date(json['create_date'] ?? json['created_at']),
       pickedAt: _date(json['picked_at'] ?? json['pickup_time']),
       deliveredAt: _date(json['delivered_at'] ?? json['delivery_time']),
+      riderPickupAt: _date(json['rider_pickup_at']),
+      phoneHidden: json['phone_hidden'] == true,
+      payoutState: _str(json['payout_state']).isEmpty ? 'unpaid' : _str(json['payout_state']),
+      payoutRef: _str(json['payout_ref']),
+      paidDate: _date(json['paid_date']),
     );
   }
 

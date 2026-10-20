@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -32,15 +34,44 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   LiveStatus _status = LiveStatus.idle;
   bool _isCompleting = false;
   bool _fitted = false;
-  late bool _pickedUp = widget.order.progressStep >= 2;
+  late DeliveryOrder _order = widget.order;
+  late bool _pickupConfirmed = widget.order.riderPickupAt != null;
   bool _pickingUp = false;
+  Timer? _statusPoll;
 
-  DeliveryOrder get order => widget.order;
+  DeliveryOrder get order => _order;
+
+  /// The shop has sent the order out (POS "Send to dispatch"). Only then does
+  /// the rider get the customer's phone and can mark it delivered.
+  bool get _dispatched => order.isOutForDelivery || order.isDelivered;
 
   @override
   void initState() {
     super.initState();
     if (order.hasLocation) _startTracking();
+    if (!_dispatched) {
+      _statusPoll = Timer.periodic(const Duration(seconds: 15), (_) => _refreshOrder());
+    }
+  }
+
+  /// Re-read the order from Soko until the shop dispatches it.
+  Future<void> _refreshOrder() async {
+    final res = await widget.odooService.getAssignedDeliveries();
+    if (!mounted || !res.ok) return;
+    final fresh = res.orders.where((o) => o.id == order.id).toList();
+    if (fresh.isEmpty) return;
+    final wasDispatched = _dispatched;
+    setState(() {
+      _order = fresh.first;
+      if (_order.riderPickupAt != null) _pickupConfirmed = true;
+    });
+    if (!wasDispatched && _dispatched) {
+      _statusPoll?.cancel();
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('The shop has sent this order out. Customer phone unlocked. Navigate to the customer.'),
+      ));
+    }
   }
 
   Future<void> _startTracking() async {
@@ -92,11 +123,12 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
     if (!mounted) return;
     setState(() {
       _pickingUp = false;
-      if (error == null) _pickedUp = true;
+      if (error == null) _pickupConfirmed = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(error ?? 'Picked up. The customer now sees you are on the way.'),
+      content: Text(error ?? 'Pick-up confirmed. Waiting for the shop to send the order out.'),
     ));
+    _refreshOrder();
   }
 
   Future<void> _completeDelivery() async {
@@ -137,6 +169,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
   @override
   void dispose() {
+    _statusPoll?.cancel();
     _locationService.stopStreaming();
     super.dispose();
   }
@@ -306,7 +339,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
         ],
       ),
       const SizedBox(height: 20),
-      ProgressSteps(step: _pickedUp && order.progressStep < 2 ? 2 : order.progressStep, dark: true),
+      ProgressSteps(step: order.progressStep, dark: true),
       const SizedBox(height: 16),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -367,8 +400,8 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
               icon: const Icon(Icons.navigation_rounded),
-              label: Text(_pickedUp ? 'Navigate' : 'To Shop', style: const TextStyle(fontWeight: FontWeight.w700)),
-              onPressed: () => _pickedUp
+              label: Text(_dispatched ? 'Navigate' : 'To Shop', style: const TextStyle(fontWeight: FontWeight.w700)),
+              onPressed: () => _dispatched
                   ? openNavigation(context, order.destLat!, order.destLng!)
                   : openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude),
             ),
@@ -385,10 +418,12 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 padding: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              onPressed: (_isCompleting || _pickingUp) ? null : (_pickedUp ? _completeDelivery : _confirmPickup),
+              onPressed: (_isCompleting || _pickingUp || (!_dispatched && _pickupConfirmed))
+                  ? null
+                  : (_dispatched ? _completeDelivery : _confirmPickup),
               child: (_isCompleting || _pickingUp)
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : Text(_pickedUp ? 'Mark Delivered' : 'Picked Up',
+                  : Text(_dispatched ? 'Mark Delivered' : (_pickupConfirmed ? 'Waiting for shop…' : 'Picked Up'),
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
             ),
           ),
@@ -408,7 +443,11 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(order.customerName.isEmpty ? 'Customer' : order.customerName,
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16), overflow: TextOverflow.ellipsis),
-            Text(order.customerPhone.isEmpty ? 'No phone on order' : 'Customer · ${order.customerPhone}', style: label),
+            Text(
+                order.phoneHidden
+                    ? 'Phone shown once the shop sends the order out'
+                    : (order.customerPhone.isEmpty ? 'No phone on order' : 'Customer · ${order.customerPhone}'),
+                style: label),
           ]),
         ),
         _circle(Icons.call, SokoColors.green, Colors.white,

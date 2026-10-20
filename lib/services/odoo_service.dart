@@ -262,6 +262,28 @@ class OdooService {
     }
   }
 
+  /// Earnings: every delivered ride with its payout and Paid/Unpaid status.
+  Future<EarningsResult> getEarnings() async {
+    try {
+      final res = await _call('/api/rider/earnings', await _creds());
+      if (res['success'] != true) {
+        return EarningsResult.error(_s(res['message']).isEmpty ? 'Could not load earnings.' : _s(res['message']));
+      }
+      double n(dynamic v) => v is num ? v.toDouble() : 0.0;
+      final List rides = (res['rides'] is List) ? res['rides'] as List : const [];
+      final List payouts = (res['payouts'] is List) ? res['payouts'] as List : const [];
+      return EarningsResult(
+        totalEarned: n(res['total_earned']),
+        totalPaid: n(res['total_paid']),
+        totalUnpaid: n(res['total_unpaid']),
+        rides: rides.whereType<Map>().map((m) => DeliveryOrder.fromOdooJson(Map<String, dynamic>.from(m))).toList(),
+        payouts: payouts.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList(),
+      );
+    } on OdooCallError catch (e) {
+      return EarningsResult.error(e.statusCode == 404 ? 'Soko server needs the earnings update.' : e.message);
+    }
+  }
+
   /// Order ids the rider has already seen (for the bell's "new order" dot).
   Future<Set<int>> getSeenOrderIds() async {
     final prefs = await SharedPreferences.getInstance();
@@ -283,7 +305,7 @@ class OdooService {
       final res = await _call('/api/rider/update_status', {
         ...await _creds(),
         'tracking_no': trackingNo,
-        'status': 'out_for_delivery',
+        'status': 'picked_up',
       });
       if (res['success'] == true) return null;
       return _s(res['message']).isEmpty ? 'Odoo did not accept the update.' : _s(res['message']);
@@ -308,6 +330,28 @@ class OdooService {
   }
 
   static String _s(dynamic v) => (v == null || v == false) ? '' : v.toString();
+}
+
+class EarningsResult {
+  final double totalEarned;
+  final double totalPaid;
+  final double totalUnpaid;
+  final List<DeliveryOrder> rides;
+  final List<Map<String, dynamic>> payouts;
+  final String? error;
+  EarningsResult({
+    required this.totalEarned,
+    required this.totalPaid,
+    required this.totalUnpaid,
+    required this.rides,
+    required this.payouts,
+  }) : error = null;
+  EarningsResult.error(this.error)
+      : totalEarned = 0,
+        totalPaid = 0,
+        totalUnpaid = 0,
+        rides = const [],
+        payouts = const [];
 }
 
 /// A delivery request from Soko dispatch waiting for accept/decline.
