@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/presence_service.dart';
 import '../services/push_service.dart';
 import '../services/rider_data.dart';
+import '../widgets/alert_settings_card.dart';
 import '../widgets/common.dart';
 import 'login_screen.dart';
 
@@ -85,6 +86,8 @@ class ProfileScreen extends StatelessWidget {
                   _row(Icons.notifications_active_outlined, 'Request alerts', PushService.instance.status ?? '—'),
                 ]),
               ),
+              const SizedBox(height: 16),
+              const AlertSettingsCard(),
               const SizedBox(height: 22),
               SizedBox(
                 height: 54,

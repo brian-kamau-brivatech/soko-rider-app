@@ -39,7 +39,8 @@ jobs:
           perms = [
               \"ACCESS_FINE_LOCATION\", \"ACCESS_COARSE_LOCATION\", \"INTERNET\",
               \"FOREGROUND_SERVICE\", \"FOREGROUND_SERVICE_LOCATION\",
-              \"POST_NOTIFICATIONS\", \"WAKE_LOCK\",
+              \"POST_NOTIFICATIONS\", \"WAKE_LOCK\", \"VIBRATE\",
+              \"USE_FULL_SCREEN_INTENT\", \"REQUEST_IGNORE_BATTERY_OPTIMIZATIONS\",
           ]
           tags = \"\".join(\"    <uses-permission android:name=\\\"android.permission.%s\\\" />\\n\" % x for x in perms if (\"permission.\" + x + chr(34)) not in c)
           intents = (

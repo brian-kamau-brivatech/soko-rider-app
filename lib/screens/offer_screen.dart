@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import '../config.dart';
+import '../services/alert_service.dart';
 import '../services/odoo_service.dart';
 import '../services/presence_service.dart';
 import '../widgets/common.dart';
@@ -35,7 +35,6 @@ class _OfferScreenState extends State<OfferScreen> {
       final left = offer.expiresAt.difference(DateTime.now()).inSeconds;
       if (!mounted) return;
       setState(() => _left = left);
-      if (left % 2 == 0) HapticFeedback.heavyImpact();
       if (left <= 0) {
         _stopRing();
         _tick?.cancel();
@@ -45,23 +44,23 @@ class _OfferScreenState extends State<OfferScreen> {
   }
 
   void _startRing() {
-    try {
-      FlutterRingtonePlayer().play(
-        android: AndroidSounds.ringtone,
-        ios: IosSounds.glass,
-        looping: true,
-        volume: 1.0,
-        asAlarm: false,
-      );
-      _ringing = true;
-    } catch (_) {}
+    final o = offer.order;
+    final parts = <String>[
+      if (o.deliveryArea.isNotEmpty) o.deliveryArea,
+      if (o.riderPayout != null) 'Payout KSh ${o.riderPayout!.toStringAsFixed(0)}',
+      if (offer.riderDistanceKm != null) '${offer.riderDistanceKm!.toStringAsFixed(1)} km to shop',
+    ];
+    AlertService.start(
+      title: 'New delivery request · ${o.trackingNo}',
+      body: parts.isEmpty ? 'Open Soko Rider to accept' : parts.join(' · '),
+      seconds: _left > 0 ? _left : 60,
+    );
+    _ringing = true;
   }
 
   void _stopRing() {
     if (!_ringing) return;
-    try {
-      FlutterRingtonePlayer().stop();
-    } catch (_) {}
+    AlertService.stop();
     _ringing = false;
   }
 

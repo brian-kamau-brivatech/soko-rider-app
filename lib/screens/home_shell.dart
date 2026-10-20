@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config.dart';
 import '../models/delivery_order.dart';
+import '../services/alert_service.dart';
 import '../services/odoo_service.dart';
 import '../services/presence_service.dart';
 import '../services/push_service.dart';
@@ -39,6 +40,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     PushService.instance.onDispatchPush = _presence.checkOffers;
     _presence.restore();
     PushService.instance.registerWith(widget.odooService);
+    // Android 13+: allow notifications so requests can ring on the lock screen.
+    AlertService.requestNotifications();
   }
 
   @override
