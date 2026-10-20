@@ -22,8 +22,5 @@ dependencies:
   flutter_map: ^7.0.0
   latlong2: ^0.9.1
 
-dependency_overrides:
-  geolocator_android: ^5.0.2
-
 flutter:
   uses-material-design: true
