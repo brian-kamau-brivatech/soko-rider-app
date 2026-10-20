@@ -32,6 +32,8 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   LiveStatus _status = LiveStatus.idle;
   bool _isCompleting = false;
   bool _fitted = false;
+  late bool _pickedUp = widget.order.progressStep >= 2;
+  bool _pickingUp = false;
 
   DeliveryOrder get order => widget.order;
 
@@ -82,6 +84,19 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
     }
     _locationService.stopStreaming();
     await _startTracking();
+  }
+
+  Future<void> _confirmPickup() async {
+    setState(() => _pickingUp = true);
+    final error = await widget.odooService.markPickedUp(order.trackingNo);
+    if (!mounted) return;
+    setState(() {
+      _pickingUp = false;
+      if (error == null) _pickedUp = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(error ?? 'Picked up. The customer now sees you are on the way.'),
+    ));
   }
 
   Future<void> _completeDelivery() async {
@@ -293,7 +308,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
         ],
       ),
       const SizedBox(height: 20),
-      ProgressSteps(step: order.progressStep, dark: true),
+      ProgressSteps(step: _pickedUp && order.progressStep < 2 ? 2 : order.progressStep, dark: true),
       const SizedBox(height: 16),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -354,8 +369,10 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
               icon: const Icon(Icons.navigation_rounded),
-              label: const Text('Navigate', style: TextStyle(fontWeight: FontWeight.w700)),
-              onPressed: () => openNavigation(context, order.destLat!, order.destLng!),
+              label: Text(_pickedUp ? 'Navigate' : 'To Shop', style: const TextStyle(fontWeight: FontWeight.w700)),
+              onPressed: () => _pickedUp
+                  ? openNavigation(context, order.destLat!, order.destLng!)
+                  : openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude),
             ),
           ),
         ),
@@ -370,10 +387,11 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 padding: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              onPressed: _isCompleting ? null : _completeDelivery,
-              child: _isCompleting
+              onPressed: (_isCompleting || _pickingUp) ? null : (_pickedUp ? _completeDelivery : _confirmPickup),
+              child: (_isCompleting || _pickingUp)
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Text('Mark Delivered', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                  : Text(_pickedUp ? 'Mark Delivered' : 'Picked Up',
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
             ),
           ),
         ),

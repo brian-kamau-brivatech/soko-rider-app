@@ -124,7 +124,7 @@ class DeliveryOrder {
     final s = _statusKey;
     if (isDelivered) return 3;
     if (s.contains('transit') || s.contains('out_for') || s.contains('on_the_way')) return 2;
-    if (s.contains('pick') || s.contains('collected') || s.contains('dispatch')) return 1;
+    if (s.contains('pick') || s.contains('collected') || s.contains('dispatch') || s == 'preparing') return 1;
     return 0;
   }
 }

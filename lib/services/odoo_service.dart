@@ -276,6 +276,22 @@ class OdooService {
     await prefs.setStringList('seen_order_ids', ids.map((e) => '$e').toList());
   }
 
+  /// Rider collected the parcel at the shop: order becomes Out for Delivery.
+  /// Returns null on success, or an error message.
+  Future<String?> markPickedUp(String trackingNo) async {
+    try {
+      final res = await _call('/api/rider/update_status', {
+        ...await _creds(),
+        'tracking_no': trackingNo,
+        'status': 'out_for_delivery',
+      });
+      if (res['success'] == true) return null;
+      return _s(res['message']).isEmpty ? 'Odoo did not accept the update.' : _s(res['message']);
+    } on OdooCallError catch (e) {
+      return e.message;
+    }
+  }
+
   /// 5. Mark delivery completed in Odoo. Returns null on success, or an error message.
   Future<String?> markOrderDelivered(String trackingNo) async {
     try {
