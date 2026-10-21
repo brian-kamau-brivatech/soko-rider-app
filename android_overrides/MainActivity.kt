@@ -105,8 +105,10 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "openBatterySettings" -> {
+                        // Battery optimisation list (Play policy: no direct exemption request).
+                        // The rider picks Soko Rider and sets "Don't optimise" / "Unrestricted".
                         val ok = Build.VERSION.SDK_INT >= 23 &&
-                            safeStart(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                            safeStart(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         if (!ok) safeStart(appSettingsIntent())
                         result.success(true)
                     }

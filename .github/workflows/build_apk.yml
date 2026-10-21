@@ -40,7 +40,7 @@ jobs:
               \"ACCESS_FINE_LOCATION\", \"ACCESS_COARSE_LOCATION\", \"INTERNET\",
               \"FOREGROUND_SERVICE\", \"FOREGROUND_SERVICE_LOCATION\",
               \"POST_NOTIFICATIONS\", \"WAKE_LOCK\", \"VIBRATE\",
-              \"USE_FULL_SCREEN_INTENT\", \"REQUEST_IGNORE_BATTERY_OPTIMIZATIONS\",
+              \"USE_FULL_SCREEN_INTENT\",
           ]
           tags = \"\".join(\"    <uses-permission android:name=\\\"android.permission.%s\\\" />\\n\" % x for x in perms if (\"permission.\" + x + chr(34)) not in c)
           intents = (
@@ -97,6 +97,9 @@ jobs:
             echo "::warning::DEBUG_KEYSTORE_BASE64 secret is not set. The APK is signed with a random key, so phones must uninstall the old app before installing this one."
           fi
 
+      - name: Play Store signing setup
+        run: python3 android_overrides/play_signing.py
+
       - name: Install Dependencies
         run: flutter pub get
 
@@ -111,10 +114,43 @@ jobs:
             echo "::warning::Firebase secrets not set. Request alerts will only work while the app is open/online."
           fi
           flutter build apk --release \
+            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
             --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
             --dart-define=FIREBASE_SENDER_ID="$FIREBASE_SENDER_ID" \
             --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"
+
+      - name: Compile Play Store App Bundle (.aab)
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          FIREBASE_SENDER_ID: ${{ secrets.FIREBASE_SENDER_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$UPLOAD_KEYSTORE_BASE64" ] || [ -z "$UPLOAD_KEYSTORE_PASSWORD" ]; then
+            echo "::warning::UPLOAD_KEYSTORE_BASE64 / UPLOAD_KEYSTORE_PASSWORD secrets not set. Skipping the Play Store App Bundle."
+            exit 0
+          fi
+          echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+          export UPLOAD_KEYSTORE_PATH="$RUNNER_TEMP/upload-keystore.jks"
+          export UPLOAD_KEY_ALIAS=upload
+          export UPLOAD_KEY_PASSWORD="$UPLOAD_KEYSTORE_PASSWORD"
+          flutter build appbundle --release \
+            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
+            --dart-define=FIREBASE_SENDER_ID="$FIREBASE_SENDER_ID" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"
+          rm -f "$UPLOAD_KEYSTORE_PATH"
+
+      - name: Upload Play Store App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Soko-Rider-PlayStore-Bundle
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: ignore
 
       - name: Upload APK Download Artifact
         uses: actions/upload-artifact@v4
@@ -129,6 +165,8 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: "Soko Express Rider v1.0.${{ github.run_number }} (Release)"
           body: "Official Soko Express Mtaani Rider Android App (Live GPS Tracking & Odoo Integration)."
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
