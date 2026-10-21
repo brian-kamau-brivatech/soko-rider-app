@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../config.dart';
 import '../models/delivery_order.dart';
+import '../services/location_hub.dart';
 import '../services/location_stream_service.dart';
 import '../services/odoo_service.dart';
 import '../widgets/common.dart';
@@ -38,6 +39,9 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   late bool _pickupConfirmed = widget.order.riderPickupAt != null;
   bool _pickingUp = false;
   Timer? _statusPoll;
+  Position? _gps; // latest phone location, for the shop-area check
+  StreamSubscription<Position>? _pickupSub;
+  static const _pickupHolder = 'pickup';
 
   DeliveryOrder get order => _order;
 
@@ -52,6 +56,48 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
     if (!_dispatched) {
       _statusPoll = Timer.periodic(const Duration(seconds: 15), (_) => _refreshOrder());
     }
+    if (!_pickupConfirmed && !_dispatched) _watchShopArea();
+  }
+
+  /// GPS while the rider is on the way to the shop, so "Picked Up" unlocks
+  /// as soon as they are inside the shop area.
+  Future<void> _watchShopArea() async {
+    _gps = LocationHub.instance.last;
+    _pickupSub = LocationHub.instance.positions.listen((p) {
+      if (mounted) setState(() => _gps = p);
+    }, onError: (_) {});
+    await LocationHub.instance.hold(_pickupHolder);
+    if (_gps == null) {
+      final last = await Geolocator.getLastKnownPosition();
+      if (mounted && last != null && _gps == null) setState(() => _gps = last);
+    }
+  }
+
+  void _stopWatchingShopArea() {
+    _pickupSub?.cancel();
+    _pickupSub = null;
+    LocationHub.instance.release(_pickupHolder);
+  }
+
+  /// Metres from the shop, or null while the phone has no location yet.
+  double? get _metresFromShop {
+    final lat = _gps?.latitude ?? _riderPos?.latitude;
+    final lng = _gps?.longitude ?? _riderPos?.longitude;
+    if (lat == null || lng == null) return null;
+    return Geolocator.distanceBetween(lat, lng, ShopArea.lat, ShopArea.lng);
+  }
+
+  bool get _insideShopArea {
+    final d = _metresFromShop;
+    return d != null && d <= ShopArea.radiusM;
+  }
+
+  String get _pickupLabel {
+    if (_pickupConfirmed) return 'Waiting for shop…';
+    final d = _metresFromShop;
+    if (d == null) return 'Finding GPS…';
+    if (d <= ShopArea.radiusM) return 'Picked Up';
+    return d >= 1000 ? 'Shop ${(d / 1000).toStringAsFixed(1)} km away' : 'Shop ${d.round()} m away';
   }
 
   /// Re-read the order from Soko until the shop dispatches it.
@@ -119,12 +165,15 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
   Future<void> _confirmPickup() async {
     setState(() => _pickingUp = true);
-    final error = await widget.odooService.markPickedUp(order.trackingNo);
+    final p = _gps;
+    final error = await widget.odooService.markPickedUp(order.trackingNo,
+        lat: p?.latitude ?? _riderPos?.latitude, lng: p?.longitude ?? _riderPos?.longitude, accuracy: p?.accuracy ?? _accuracyM);
     if (!mounted) return;
     setState(() {
       _pickingUp = false;
       if (error == null) _pickupConfirmed = true;
     });
+    if (error == null) _stopWatchingShopArea();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(error ?? 'Pick-up confirmed. Waiting for the shop to send the order out.'),
     ));
@@ -170,6 +219,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   @override
   void dispose() {
     _statusPoll?.cancel();
+    _stopWatchingShopArea();
     _locationService.stopStreaming();
     super.dispose();
   }
@@ -403,7 +453,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
               label: Text(_dispatched ? 'Navigate' : 'To Shop', style: const TextStyle(fontWeight: FontWeight.w700)),
               onPressed: () => _dispatched
                   ? openNavigation(context, order.destLat!, order.destLng!)
-                  : openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude),
+                  : openNavigation(context, ShopArea.lat, ShopArea.lng),
             ),
           ),
         ),
@@ -418,17 +468,28 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 padding: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              onPressed: (_isCompleting || _pickingUp || (!_dispatched && _pickupConfirmed))
+              onPressed: (_isCompleting || _pickingUp || (!_dispatched && (_pickupConfirmed || !_insideShopArea)))
                   ? null
                   : (_dispatched ? _completeDelivery : _confirmPickup),
               child: (_isCompleting || _pickingUp)
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : Text(_dispatched ? 'Mark Delivered' : (_pickupConfirmed ? 'Waiting for shop…' : 'Picked Up'),
+                  : Text(_dispatched ? 'Mark Delivered' : _pickupLabel,
+                      textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
             ),
           ),
         ),
       ]),
+      if (!_dispatched && !_pickupConfirmed)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            _insideShopArea
+                ? 'You are at the shop. Collect the parcel, then tap Picked Up.'
+                : 'Picked Up unlocks when you are within ${ShopArea.radiusM.round()} m of the shop.',
+            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12.5),
+          ),
+        ),
       const SizedBox(height: 22),
 
       // Customer contact footer

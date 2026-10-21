@@ -163,6 +163,7 @@ class OdooService {
       if (res['success'] != true) {
         return OrdersResult(const [], _s(res['message']).isEmpty ? 'Server refused the request.' : _s(res['message']));
       }
+      ShopArea.update(res['shop']);
       final List ordersJson = (res['orders'] is List) ? res['orders'] as List : const [];
       final orders = ordersJson
           .whereType<Map>()
@@ -300,12 +301,15 @@ class OdooService {
 
   /// Rider collected the parcel at the shop: order becomes Out for Delivery.
   /// Returns null on success, or an error message.
-  Future<String?> markPickedUp(String trackingNo) async {
+  Future<String?> markPickedUp(String trackingNo, {double? lat, double? lng, double? accuracy}) async {
     try {
       final res = await _call('/api/rider/update_status', {
         ...await _creds(),
         'tracking_no': trackingNo,
         'status': 'picked_up',
+        if (lat != null && lng != null) 'lat': lat,
+        if (lat != null && lng != null) 'lng': lng,
+        if (accuracy != null) 'accuracy': accuracy,
       });
       if (res['success'] == true) return null;
       return _s(res['message']).isEmpty ? 'Odoo did not accept the update.' : _s(res['message']);
@@ -380,4 +384,22 @@ class OdooCallError implements Exception {
   OdooCallError(this.message, [this.statusCode]);
   @override
   String toString() => message;
+}
+
+/// The shop's pick-up area, sent by Soko (Dispatch Settings). The rider can
+/// press "Picked Up" only inside it.
+class ShopArea {
+  static double lat = AppConfig.shopLatitude;
+  static double lng = AppConfig.shopLongitude;
+  static double radiusM = 150;
+
+  static void update(dynamic shop) {
+    if (shop is! Map) return;
+    final la = shop['lat'], ln = shop['lng'], r = shop['radius_m'];
+    if (la is num && ln is num) {
+      lat = la.toDouble();
+      lng = ln.toDouble();
+    }
+    if (r is num && r > 0) radiusM = r.toDouble();
+  }
 }
