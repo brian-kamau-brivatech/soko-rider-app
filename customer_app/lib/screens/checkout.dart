@@ -131,6 +131,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         lat: _pin.latitude,
         lng: _pin.longitude,
         lines: Map<int, double>.from(store.cart),
+        session: store.session,
       );
       await store.rememberOrder(order);
       store.clearCart();

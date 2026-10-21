@@ -28,8 +28,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   int _known = -1;
+  String _knownSession = '';
   void _onStore() {
-    if (AppStore.instance.orderRefs.length != _known) _load();
+    final s = AppStore.instance;
+    if (s.orderRefs.length != _known || s.session != _knownSession) _load();
   }
 
   void _onTab() {
@@ -46,8 +48,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _load() async {
     final refs = AppStore.instance.orderRefs;
     _known = refs.length;
+    _knownSession = AppStore.instance.session;
     if (!mounted) return;
-    if (refs.isEmpty) {
+    if (refs.isEmpty && !AppStore.instance.signedIn) {
       setState(() => _orders = []);
       return;
     }
@@ -57,7 +60,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       _error = null;
     });
     try {
-      final list = await ShopApi.orders(refs);
+      final list = await ShopApi.orders(refs, session: AppStore.instance.session);
       if (mounted) setState(() => _orders = list);
       ordersVersion.value++;
     } catch (e) {

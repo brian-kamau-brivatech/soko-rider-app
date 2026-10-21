@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'screens/auth.dart';
 import 'screens/shell.dart';
 import 'store.dart';
 import 'ui.dart';
@@ -13,6 +14,7 @@ Future<void> main() async {
   ));
   await AppStore.instance.init();
   AppStore.instance.loadCatalog();
+  AppStore.instance.refreshProfile();
   runApp(const SokoShopApp());
 }
 
@@ -38,7 +40,8 @@ class SokoShopApp extends StatelessWidget {
           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: C.green, width: 1.6)),
         ),
       ),
-      home: const Shell(),
+      // First launch: sign in / create account (can skip). After that: the shop.
+      home: (AppStore.instance.signedIn || AppStore.instance.authSeen) ? const Shell() : const AuthScreen(firstRun: true),
     );
   }
 }

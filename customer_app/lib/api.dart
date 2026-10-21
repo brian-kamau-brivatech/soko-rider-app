@@ -192,6 +192,20 @@ class ShopApi {
     return Map<String, dynamic>.from((data as Map)['result'] ?? const {});
   }
 
+  static Future<Map<String, dynamic>> _auth(String path, Map<String, dynamic> params) async {
+    final r = await _call(path, params);
+    if (r['ok'] != true) throw ApiError(_s(r['error']).isEmpty ? 'Something went wrong.' : _s(r['error']));
+    return r;
+  }
+
+  static Future<Map<String, dynamic>> signUp(String name, String phone, String pin) =>
+      _auth('/soko/shop/signup', {'name': name, 'phone': phone, 'pin': pin});
+
+  static Future<Map<String, dynamic>> signIn(String phone, String pin) =>
+      _auth('/soko/shop/signin', {'phone': phone, 'pin': pin});
+
+  static Future<Map<String, dynamic>> me(String session) => _auth('/soko/shop/me', {'session': session});
+
   static Future<Catalog> catalog() async => Catalog.fromJson(await _call('/soko/shop/catalog', {}));
 
   static Future<Quote> quote(double lat, double lng) async =>
@@ -206,8 +220,10 @@ class ShopApi {
     required double lng,
     required Map<int, double> lines,
     String note = '',
+    String session = '',
   }) async {
     final r = await _call('/soko/shop/order', {
+      'session': session,
       'name': name,
       'phone': phone,
       'street': street,
@@ -235,8 +251,8 @@ class ShopApi {
     return ShopOrder.fromJson(Map<String, dynamic>.from(r['order']));
   }
 
-  static Future<List<ShopOrder>> orders(List<Map<String, dynamic>> items) async {
-    final r = await _call('/soko/shop/orders', {'items': items});
+  static Future<List<ShopOrder>> orders(List<Map<String, dynamic>> items, {String session = ''}) async {
+    final r = await _call('/soko/shop/orders', {'items': items, 'session': session});
     return ((r['orders'] as List?) ?? const [])
         .map((e) => ShopOrder.fromJson(Map<String, dynamic>.from(e)))
         .toList();

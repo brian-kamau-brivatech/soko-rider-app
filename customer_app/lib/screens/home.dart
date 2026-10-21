@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'auth.dart';
 import 'orders.dart';
 import 'shell.dart';
 import 'track.dart';
@@ -31,9 +32,9 @@ class HomeScreen extends StatelessWidget {
                   Image.asset('assets/logo.png', height: 42),
                   const Spacer(),
                   SquareButton(
-                    icon: Icons.receipt_long_outlined,
-                    tooltip: 'My orders',
-                    onTap: () => currentTab.value = 3,
+                    icon: store.signedIn ? Icons.person_rounded : Icons.person_outline_rounded,
+                    tooltip: store.signedIn ? 'My account' : 'Sign in',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen())),
                   ),
                   const SizedBox(width: 10),
                   SquareButton(
@@ -238,9 +239,9 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
 
   Future<void> _load() async {
     final refs = AppStore.instance.orderRefs;
-    if (refs.isEmpty) return;
+    if (refs.isEmpty && !AppStore.instance.signedIn) return;
     try {
-      final list = await ShopApi.orders(refs.take(3).toList());
+      final list = await ShopApi.orders(refs.take(3).toList(), session: AppStore.instance.session);
       final active = list.where((o) => !o.delivered && !o.cancelled && (o.paid || o.step > 0)).toList();
       if (mounted) setState(() => _order = active.isEmpty ? null : active.first);
     } catch (_) {}

@@ -24,6 +24,11 @@ class AppStore extends ChangeNotifier {
   double? lat;
   double? lng;
 
+  /// Signed-in account (empty = guest).
+  String session = '';
+  bool authSeen = false;
+  bool get signedIn => session.isNotEmpty;
+
   /// Orders placed from this phone: [{id, token}]
   List<Map<String, dynamic>> orderRefs = [];
 
@@ -37,6 +42,8 @@ class AppStore extends ChangeNotifier {
     street2 = _prefs.getString('c_street2') ?? '';
     lat = _prefs.getDouble('c_lat');
     lng = _prefs.getDouble('c_lng');
+    session = _prefs.getString('session') ?? '';
+    authSeen = _prefs.getBool('auth_seen') ?? false;
     try {
       final c = jsonDecode(_prefs.getString('cart') ?? '{}') as Map;
       c.forEach((k, v) => cart[int.parse('$k')] = (v as num).toDouble());
@@ -125,6 +132,57 @@ class AppStore extends ChangeNotifier {
     await _prefs.setString('c_street2', street2);
     await _prefs.setDouble('c_lat', lat);
     await _prefs.setDouble('c_lng', lng);
+  }
+
+  /// Save a signed-in session and the profile the server sent back.
+  Future<void> signedInWith(Map<String, dynamic> r) async {
+    session = '${r['session'] ?? ''}';
+    await _prefs.setString('session', session);
+    await markAuthSeen();
+    applyProfile(r['profile']);
+  }
+
+  void applyProfile(dynamic p) {
+    if (p is! Map) return;
+    String s(String k) => (p[k] == null || p[k] == false) ? '' : '${p[k]}';
+    if (s('name').isNotEmpty) name = s('name');
+    if (s('phone').isNotEmpty) phone = s('phone');
+    if (s('street').isNotEmpty) street = s('street');
+    if (s('street2').isNotEmpty) street2 = s('street2');
+    if (p['lat'] is num && p['lng'] is num) {
+      lat = (p['lat'] as num).toDouble();
+      lng = (p['lng'] as num).toDouble();
+      _prefs.setDouble('c_lat', lat!);
+      _prefs.setDouble('c_lng', lng!);
+    }
+    _prefs.setString('c_name', name);
+    _prefs.setString('c_phone', phone);
+    _prefs.setString('c_street', street);
+    _prefs.setString('c_street2', street2);
+    notifyListeners();
+  }
+
+  Future<void> markAuthSeen() async {
+    authSeen = true;
+    await _prefs.setBool('auth_seen', true);
+    notifyListeners();
+  }
+
+  Future<void> signOut() async {
+    session = '';
+    await _prefs.remove('session');
+    notifyListeners();
+  }
+
+  /// Refresh the profile in the background (also drops an expired session).
+  Future<void> refreshProfile() async {
+    if (!signedIn) return;
+    try {
+      final r = await ShopApi.me(session);
+      applyProfile(r['profile']);
+    } on ApiError catch (e) {
+      if (e.message.contains('sign in')) await signOut();
+    } catch (_) {}
   }
 
   Future<void> rememberOrder(ShopOrder o) async {
