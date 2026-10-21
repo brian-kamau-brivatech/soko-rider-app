@@ -69,6 +69,19 @@ jobs:
       - name: Check the code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
+      - name: Install Android NDK (with retries)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for i in 1 2 3 4; do
+            rm -rf "$ANDROID_HOME/ndk/27.0.12077973"
+            if yes | "$SDKM" --install "ndk;27.0.12077973" > /tmp/ndk.log 2>&1 \
+               && [ -f "$ANDROID_HOME/ndk/27.0.12077973/source.properties" ]; then
+              echo "NDK installed"; exit 0
+            fi
+            echo "NDK download failed (try $i), retrying"; tail -5 /tmp/ndk.log; sleep 15
+          done
+          exit 1
+
       - name: Build APK
         run: flutter build apk --release --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }}
 
