@@ -183,3 +183,245 @@ class StaffApi {
   static Future<String> askRider(String pin, int orderId, {int? riderId}) async => _s((await _call(
       '/soko/staff/ask_rider', {'pin': pin, 'order_id': orderId, if (riderId != null) 'rider_id': riderId}))['message']);
 }
+
+// ---------------------------------------------------------------------------
+// Selling (POS) — saved as real Odoo POS orders on the server.
+// ---------------------------------------------------------------------------
+class PosProduct {
+  final int id;
+  final String name;
+  final double price; // tax included, as on the POS screen
+  final String uom;
+  final String barcode;
+  final List<int> categIds;
+  final double? qty;
+  final String image;
+  PosProduct.fromJson(Map<String, dynamic> j)
+      : id = _i(j['id']),
+        name = _s(j['name']),
+        price = _d(j['price']),
+        uom = _s(j['uom']),
+        barcode = _s(j['barcode']),
+        categIds = ((j['categ_ids'] as List?) ?? const []).map(_i).toList(),
+        qty = j['qty'] == null || j['qty'] == false ? null : _d(j['qty']),
+        image = '${AppConfig.baseUrl}${_s(j['image'])}';
+}
+
+class PayMethod {
+  final int id;
+  final String name;
+  final bool cash;
+  final bool mpesa;
+  PayMethod.fromJson(Map<String, dynamic> j)
+      : id = _i(j['id']),
+        name = _s(j['name']),
+        cash = j['cash'] == true,
+        mpesa = j['mpesa'] == true;
+}
+
+class PosSetup {
+  final String configName;
+  final bool sessionOpen;
+  final String sessionName;
+  final String cashier;
+  final List<PayMethod> methods;
+  final List<Map<String, dynamic>> categories;
+  final List<PosProduct> products;
+  final String shopName;
+  final String shopPhone;
+  final String shopEmail;
+  final String header;
+  final String footer;
+  PosSetup.fromJson(Map<String, dynamic> j)
+      : configName = _s((j['config'] ?? const {})['name']),
+        sessionOpen = j['session'] is Map,
+        sessionName = j['session'] is Map ? _s(j['session']['name']) : '',
+        cashier = j['session'] is Map ? _s(j['session']['user']) : '',
+        methods = ((j['payment_methods'] as List?) ?? const [])
+            .map((e) => PayMethod.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        categories = ((j['categories'] as List?) ?? const []).map((e) => Map<String, dynamic>.from(e)).toList(),
+        products = ((j['products'] as List?) ?? const [])
+            .map((e) => PosProduct.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        shopName = _s((j['company'] ?? const {})['name']),
+        shopPhone = _s((j['company'] ?? const {})['phone']),
+        shopEmail = _s((j['company'] ?? const {})['email']),
+        header = _s(j['receipt_header']),
+        footer = _s(j['receipt_footer']);
+}
+
+class SaleLine {
+  final String name;
+  final double qty;
+  final double price;
+  final double total;
+  SaleLine.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        qty = _d(j['qty']),
+        price = _d(j['price']),
+        total = _d(j['total']);
+}
+
+class SalePayment {
+  final String method;
+  final double amount;
+  final String ref;
+  SalePayment.fromJson(Map<String, dynamic> j)
+      : method = _s(j['method']),
+        amount = _d(j['amount']),
+        ref = _s(j['ref']);
+}
+
+class Sale {
+  final int id;
+  final String name;
+  final String ref;
+  final String date;
+  final double amount;
+  final double tax;
+  final double paid;
+  final double change;
+  final String state;
+  final String customer;
+  final String cashier;
+  final String session;
+  final bool fromApp;
+  final int count;
+  final List<SalePayment> payments;
+  final List<SaleLine> lines;
+  Sale.fromJson(Map<String, dynamic> j)
+      : id = _i(j['id']),
+        name = _s(j['name']),
+        ref = _s(j['ref']),
+        date = _s(j['date']),
+        amount = _d(j['amount']),
+        tax = _d(j['tax']),
+        paid = _d(j['paid']),
+        change = _d(j['change']),
+        state = _s(j['state']),
+        customer = _s(j['customer']),
+        cashier = _s(j['cashier']),
+        session = _s(j['session']),
+        fromApp = j['from_app'] == true,
+        count = _i(j['count']),
+        payments = ((j['payments'] as List?) ?? const [])
+            .map((e) => SalePayment.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        lines = ((j['lines'] as List?) ?? const [])
+            .map((e) => SaleLine.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+
+  String get time => date.length >= 16 ? date.substring(11, 16) : date;
+  String get methods => payments.where((p) => p.amount > 0).map((p) => p.method).toSet().join(' + ');
+}
+
+class SalesDay {
+  final String day;
+  final int count;
+  final double total;
+  final List<SalePayment> byMethod;
+  final List<Sale> orders;
+  SalesDay.fromJson(Map<String, dynamic> j)
+      : day = _s(j['day']),
+        count = _i(j['count']),
+        total = _d(j['total']),
+        byMethod = ((j['by_method'] as List?) ?? const [])
+            .map((e) => SalePayment.fromJson({'method': e['method'], 'amount': e['amount']}))
+            .toList(),
+        orders = ((j['orders'] as List?) ?? const [])
+            .map((e) => Sale.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+}
+
+class StockItem {
+  final String name;
+  final double qty;
+  final double forecast;
+  final String uom;
+  StockItem.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        qty = _d(j['qty']),
+        forecast = _d(j['forecast']),
+        uom = _s(j['uom']);
+}
+
+class StockMove {
+  final String date;
+  final String product;
+  final double qty;
+  final String uom;
+  final String from;
+  final String to;
+  final String ref;
+  final bool isIn;
+  final bool isOut;
+  StockMove.fromJson(Map<String, dynamic> j)
+      : date = _s(j['date']),
+        product = _s(j['product']),
+        qty = _d(j['qty']),
+        uom = _s(j['uom']),
+        from = _s(j['from']),
+        to = _s(j['to']),
+        ref = _s(j['ref']),
+        isIn = j['in'] == true,
+        isOut = j['out'] == true;
+}
+
+class MpesaFound {
+  final bool found;
+  final int txnId;
+  final String receipt;
+  MpesaFound(this.found, this.txnId, this.receipt);
+}
+
+class PosApi {
+  static Future<Map<String, dynamic>> _c(String path, Map<String, dynamic> p) => StaffApi._call(path, p);
+
+  static Future<PosSetup> setup(String pin) async => PosSetup.fromJson(await _c('/soko/staff/pos/setup', {'pin': pin}));
+
+  static Future<MpesaFound> mpesaCheck(String pin, String phone, double amount) async {
+    final r = await _c('/soko/staff/pos/mpesa_check', {'pin': pin, 'phone': phone, 'amount': amount});
+    return MpesaFound(r['found'] == true, _i(r['txn_id']), _s(r['receipt']));
+  }
+
+  static Future<int> mpesaPrompt(String pin, String phone, double amount) async =>
+      _i((await _c('/soko/staff/pos/mpesa_prompt', {'pin': pin, 'phone': phone, 'amount': amount}))['tx_id']);
+
+  /// 'waiting' | 'paid' | 'cancelled' | 'failed' (+ payment found when paid)
+  static Future<(String, MpesaFound)> mpesaPromptStatus(String pin, int txId, String phone, double amount) async {
+    final r = await _c('/soko/staff/pos/mpesa_prompt_status', {'pin': pin, 'tx_id': txId, 'phone': phone, 'amount': amount});
+    return (_s(r['state']), MpesaFound(r['found'] == true, _i(r['txn_id']), _s(r['receipt'])));
+  }
+
+  static Future<Sale> sell(String pin,
+      {required String uid,
+      required List<Map<String, dynamic>> lines,
+      required List<Map<String, dynamic>> payments,
+      String customerPhone = '',
+      String customerName = ''}) async {
+    final r = await _c('/soko/staff/pos/sell', {
+      'pin': pin,
+      'uid': uid,
+      'lines': lines,
+      'payments': payments,
+      'customer_phone': customerPhone,
+      'customer_name': customerName,
+    });
+    return Sale.fromJson(Map<String, dynamic>.from(r['order']));
+  }
+
+  static Future<SalesDay> sales(String pin, {int daysAgo = 0}) async =>
+      SalesDay.fromJson(await _c('/soko/staff/pos/sales', {'pin': pin, 'days': daysAgo}));
+
+  static Future<Sale> sale(String pin, int id) async =>
+      Sale.fromJson(Map<String, dynamic>.from((await _c('/soko/staff/pos/sale', {'pin': pin, 'order_id': id}))['order']));
+
+  static Future<(List<StockItem>, List<StockMove>)> stock(String pin) async {
+    final r = await _c('/soko/staff/stock', {'pin': pin});
+    return (
+      ((r['products'] as List?) ?? const []).map((e) => StockItem.fromJson(Map<String, dynamic>.from(e))).toList(),
+      ((r['moves'] as List?) ?? const []).map((e) => StockMove.fromJson(Map<String, dynamic>.from(e))).toList(),
+    );
+  }
+}

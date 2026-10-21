@@ -4,8 +4,9 @@ import '../ui.dart';
 import 'alert_screen.dart';
 import 'home.dart';
 import 'orders.dart';
-import 'riders.dart';
-import 'settings.dart';
+import 'more.dart';
+import 'sales.dart';
+import 'sell.dart';
 
 final ValueNotifier<int> tab = ValueNotifier<int>(0);
 
@@ -45,7 +46,7 @@ class _ShellState extends State<Shell> {
     return ValueListenableBuilder<int>(
       valueListenable: tab,
       builder: (context, t, _) => Scaffold(
-        body: IndexedStack(index: t, children: const [HomeScreen(), OrdersScreen(), RidersScreen(), SettingsScreen()]),
+        body: IndexedStack(index: t, children: const [HomeScreen(), OrdersScreen(), SellScreen(), SalesScreen(), MoreScreen()]),
         bottomNavigationBar: ListenableBuilder(
           listenable: Store.i,
           builder: (context, _) {
@@ -62,8 +63,9 @@ class _ShellState extends State<Shell> {
                   selectedIcon: Badge(isLabelVisible: newCount > 0, label: Text('$newCount'), child: const Icon(Icons.receipt_long_rounded)),
                   label: 'Orders',
                 ),
-                const NavigationDestination(icon: Icon(Icons.two_wheeler_outlined), selectedIcon: Icon(Icons.two_wheeler_rounded), label: 'Riders'),
-                const NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings_rounded), label: 'Settings'),
+                const NavigationDestination(icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale_rounded), label: 'Sell'),
+                const NavigationDestination(icon: Icon(Icons.bar_chart_outlined), selectedIcon: Icon(Icons.bar_chart_rounded), label: 'Sales'),
+                const NavigationDestination(icon: Icon(Icons.more_horiz_rounded), selectedIcon: Icon(Icons.more_horiz_rounded), label: 'More'),
               ],
             );
           },
