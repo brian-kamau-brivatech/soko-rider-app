@@ -3,6 +3,7 @@ import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
 import 'payment.dart';
+import 'session_screen.dart';
 
 /// Sell at the counter: products and prices come from the Odoo POS.
 class SellScreen extends StatefulWidget {
@@ -244,8 +245,20 @@ class _SellScreenState extends State<SellScreen> {
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: C.redLight, borderRadius: BorderRadius.circular(14)),
-              child: const Text('The POS session is closed. Open it in Odoo POS, then tap reload.',
-                  style: TextStyle(color: C.red, fontWeight: FontWeight.w600)),
+              child: Row(children: [
+                const Expanded(
+                  child: Text('The POS session is closed.', style: TextStyle(color: C.red, fontWeight: FontWeight.w600)),
+                ),
+                TextButton.icon(
+                  onPressed: () async {
+                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SessionScreen()));
+                    _load();
+                  },
+                  icon: const Icon(Icons.lock_open_rounded),
+                  label: const Text('Open session'),
+                  style: TextButton.styleFrom(foregroundColor: C.red),
+                ),
+              ]),
             ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),

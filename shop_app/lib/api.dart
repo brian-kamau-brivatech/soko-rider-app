@@ -29,6 +29,7 @@ class ShopOrder {
   final double amount;
   final String ago;
   final String customer;
+  final String customerPhone;
   final String address;
   final double km;
   final double fee;
@@ -53,6 +54,7 @@ class ShopOrder {
         amount = _d(j['amount']),
         ago = _s(j['ago']),
         customer = _s(j['customer']),
+        customerPhone = _s(j['customer_phone']),
         address = _s(j['address']),
         km = _d(j['km']),
         fee = _d(j['fee']),
@@ -533,3 +535,92 @@ class DispatchCheckout {
         online = j['online'] is Map ? OnlinePayment.fromJson(Map<String, dynamic>.from(j['online'])) : null,
         note = _s(j['note']);
 }
+
+// ---------------------------------------------------------------------------
+// POS session: open and close from the app.
+// ---------------------------------------------------------------------------
+class CashMove {
+  final String name;
+  final double amount;
+  CashMove.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        amount = _d(j['amount']);
+}
+
+class SessionClosing {
+  final int orders;
+  final double amount;
+  final String cashName;
+  final bool hasCash;
+  final double cashExpected;
+  final double cashOpening;
+  final double cashPayments;
+  final List<CashMove> cashMoves;
+  final List<SalePayment> other;
+  final double? maxDifference;
+  final List<String> drafts;
+  SessionClosing.fromJson(Map<String, dynamic> j)
+      : orders = _i(j['orders']),
+        amount = _d(j['amount']),
+        hasCash = j['cash'] is Map,
+        cashName = j['cash'] is Map ? _s(j['cash']['name']) : '',
+        cashExpected = j['cash'] is Map ? _d(j['cash']['expected']) : 0,
+        cashOpening = j['cash'] is Map ? _d(j['cash']['opening']) : 0,
+        cashPayments = j['cash'] is Map ? _d(j['cash']['payments']) : 0,
+        cashMoves = j['cash'] is Map
+            ? ((j['cash']['moves'] as List?) ?? const []).map((e) => CashMove.fromJson(Map<String, dynamic>.from(e))).toList()
+            : const [],
+        other = ((j['other'] as List?) ?? const [])
+            .map((e) => SalePayment.fromJson({'method': e['name'], 'amount': e['amount']}))
+            .toList(),
+        maxDifference = j['max_difference'] == null || j['max_difference'] == false ? null : _d(j['max_difference']),
+        drafts = ((j['drafts'] as List?) ?? const []).map(_s).toList();
+}
+
+class SessionInfo {
+  final String config;
+  final String state; // closed | opening_control | opened | closing_control
+  final String user;
+  final bool cashControl;
+  final double openingSuggestion;
+  final String sessionName;
+  final String startAt;
+  final double openingCash;
+  final String lastClosedName;
+  final String lastClosedAt;
+  final SessionClosing? closing;
+  SessionInfo.fromJson(Map<String, dynamic> j)
+      : config = _s(j['config']),
+        state = _s(j['state']),
+        user = _s(j['user']),
+        cashControl = j['cash_control'] == true,
+        openingSuggestion = _d(j['opening_suggestion']),
+        sessionName = j['session'] is Map ? _s(j['session']['name']) : '',
+        startAt = j['session'] is Map ? _s(j['session']['start_at']) : '',
+        openingCash = j['session'] is Map ? _d(j['session']['opening_cash']) : 0,
+        lastClosedName = j['last_closed'] is Map ? _s(j['last_closed']['name']) : '',
+        lastClosedAt = j['last_closed'] is Map ? _s(j['last_closed']['stop_at']) : '',
+        closing = j['closing'] is Map ? SessionClosing.fromJson(Map<String, dynamic>.from(j['closing'])) : null;
+
+  bool get isOpen => state == 'opened';
+  bool get isClosing => state == 'closing_control';
+  bool get canOpen => state == 'closed' || state == 'opening_control';
+}
+
+class SessionApi {
+  static Future<SessionInfo> info(String pin) async =>
+      SessionInfo.fromJson(Map<String, dynamic>.from((await StaffApi._call('/soko/staff/pos/session', {'pin': pin}))['info']));
+
+  static Future<(String, SessionInfo)> open(String pin, {required double openingCash, String notes = ''}) async {
+    final r = await StaffApi._call('/soko/staff/pos/session_open', {'pin': pin, 'opening_cash': openingCash, 'notes': notes});
+    return (_s(r['message']), SessionInfo.fromJson(Map<String, dynamic>.from(r['info'])));
+  }
+
+  /// Returns the message and a short summary map of the closed session.
+  static Future<(String, Map<String, dynamic>)> close(String pin, {double? countedCash, String notes = ''}) async {
+    final r = await StaffApi._call('/soko/staff/pos/session_close',
+        {'pin': pin, if (countedCash != null) 'counted_cash': countedCash, 'notes': notes});
+    return (_s(r['message']), Map<String, dynamic>.from(r['summary'] ?? const {}));
+  }
+}
+

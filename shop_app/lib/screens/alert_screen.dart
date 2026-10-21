@@ -47,6 +47,11 @@ class AlertScreen extends StatelessWidget {
                     child: Text(o.paid ? 'PAID · M-PESA' : 'NOT PAID', style: h(12, color: o.paid ? C.greenDark : C.red)),
                   ),
                 ]),
+                if (o.customer.isNotEmpty || o.customerPhone.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text([if (o.customer.isNotEmpty) o.customer, if (o.customerPhone.isNotEmpty) o.customerPhone].join(' · '),
+                      style: h(16, w: FontWeight.w700)),
+                ],
                 const SizedBox(height: 10),
                 Text(o.items.isEmpty ? '${o.count} items' : o.items, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),

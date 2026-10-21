@@ -95,6 +95,17 @@ class OrderCard extends StatelessWidget {
                 ),
                 StatusChip(o),
               ]),
+              if (o.customer.isNotEmpty || o.customerPhone.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Icon(Icons.person_rounded, size: 15, color: C.navy),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text([if (o.customer.isNotEmpty) o.customer, if (o.customerPhone.isNotEmpty) o.customerPhone].join(' · '),
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: h(13.5, w: FontWeight.w700)),
+                  ),
+                ]),
+              ],
               const SizedBox(height: 6),
               Text(o.items.isEmpty ? '${o.count} items' : o.items,
                   maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: C.muted)),

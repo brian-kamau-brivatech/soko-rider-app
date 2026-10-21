@@ -268,6 +268,23 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   decoration: card(),
                   child: Column(children: [
                     _row('Customer', o.customer.isEmpty ? '—' : o.customer),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(children: [
+                        const SizedBox(width: 104, child: Text('Phone', style: TextStyle(color: C.muted))),
+                        Expanded(
+                          child: SelectableText(o.customerPhone.isEmpty ? '—' : o.customerPhone,
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+                        ),
+                        if (o.customerPhone.isNotEmpty)
+                          IconButton.filledTonal(
+                            tooltip: 'Call customer',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => callNumber(context, o.customerPhone),
+                            icon: const Icon(Icons.phone_rounded, color: C.green),
+                          ),
+                      ]),
+                    ),
                     _row('Address', o.address.isEmpty ? '—' : o.address),
                     _row('Delivery fee', '${ksh(o.fee)}${o.km > 0 ? ' · ${o.km.toStringAsFixed(1)} km' : ''}'),
                     const Divider(color: C.line),

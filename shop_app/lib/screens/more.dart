@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../ui.dart';
 import 'riders.dart';
+import 'session_screen.dart';
 import 'settings.dart';
 import 'stock.dart';
 
@@ -27,6 +28,7 @@ class MoreScreen extends StatelessWidget {
       child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
         Text('More', style: h(22)),
         const SizedBox(height: 14),
+        item(Icons.lock_clock_rounded, 'POS session', 'Open or close the day (cash count)', const SessionScreen()),
         item(Icons.inventory_2_rounded, 'Stock', 'On hand and inventory moves', const StockScreen()),
         item(Icons.two_wheeler_rounded, 'Riders', 'Who is free, busy or offline', const _Page('Riders', RidersScreen())),
         item(Icons.settings_rounded, 'Settings', 'Alerts, printer, this device', const _Page('Settings', SettingsScreen())),
