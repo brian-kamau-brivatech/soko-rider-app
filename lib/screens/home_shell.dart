@@ -66,6 +66,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   Future<void> _showOffer(DispatchOffer offer) async {
     if (_offerOpen || !mounted) return;
     _offerOpen = true;
+    // Ring straight away (works with the screen locked); the request screen
+    // shows when the phone wakes.
+    AlertService.startForOffer(offer);
     final accepted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(fullscreenDialog: true, builder: (_) => OfferScreen(offer: offer, presence: _presence)),
     );

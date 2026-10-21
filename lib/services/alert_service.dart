@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'odoo_service.dart';
 
 /// Rings the phone for a delivery request, also when the screen is locked
 /// (native Android code in MainActivity.kt): wakes the screen, shows the
@@ -52,6 +53,23 @@ class AlertService {
         'seconds': seconds,
       });
     } catch (_) {}
+  }
+
+  /// Ring for a delivery request. Called as soon as the request is fetched,
+  /// so it works with the screen locked (no screen has to be drawn first).
+  static Future<void> startForOffer(DispatchOffer offer) {
+    final o = offer.order;
+    final parts = <String>[
+      if (o.deliveryArea.isNotEmpty) o.deliveryArea,
+      if (o.riderPayout != null) 'Payout KSh ${o.riderPayout!.toStringAsFixed(0)}',
+      if (offer.riderDistanceKm != null) '${offer.riderDistanceKm!.toStringAsFixed(1)} km to shop',
+    ];
+    final left = offer.expiresAt.difference(DateTime.now()).inSeconds;
+    return start(
+      title: 'New delivery request · ${o.trackingNo}',
+      body: parts.isEmpty ? 'Open Soko Rider to accept' : parts.join(' · '),
+      seconds: left > 0 ? left : 60,
+    );
   }
 
   static Future<void> stop() async {

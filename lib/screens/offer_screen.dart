@@ -30,7 +30,8 @@ class _OfferScreenState extends State<OfferScreen> {
   void initState() {
     super.initState();
     _left = offer.expiresAt.difference(DateTime.now()).inSeconds;
-    _startRing();
+    // Already ringing: Home started the alert when the request arrived.
+    _ringing = true;
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       final left = offer.expiresAt.difference(DateTime.now()).inSeconds;
       if (!mounted) return;
@@ -44,17 +45,7 @@ class _OfferScreenState extends State<OfferScreen> {
   }
 
   void _startRing() {
-    final o = offer.order;
-    final parts = <String>[
-      if (o.deliveryArea.isNotEmpty) o.deliveryArea,
-      if (o.riderPayout != null) 'Payout KSh ${o.riderPayout!.toStringAsFixed(0)}',
-      if (offer.riderDistanceKm != null) '${offer.riderDistanceKm!.toStringAsFixed(1)} km to shop',
-    ];
-    AlertService.start(
-      title: 'New delivery request · ${o.trackingNo}',
-      body: parts.isEmpty ? 'Open Soko Rider to accept' : parts.join(' · '),
-      seconds: _left > 0 ? _left : 60,
-    );
+    AlertService.startForOffer(offer);
     _ringing = true;
   }
 
