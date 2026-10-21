@@ -1,68 +1,72 @@
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:flutter/services.dart';
 import 'api.dart';
 
 /// Prints a POS receipt on the handheld's built-in printer through Android
-/// printing (the device's print service), 58 mm roll.
+/// printing (native code in MainActivity), on a 58 mm roll.
 class Receipt {
-  static String _m(double v) => v.toStringAsFixed(2);
+  static const _ch = MethodChannel('soko/alert');
 
-  static Future<pw.Document> build(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) async {
-    final doc = pw.Document();
-    final base = pw.TextStyle(fontSize: 8);
-    final bold = pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold);
-    pw.Widget row(String a, String b, {pw.TextStyle? style}) => pw.Row(children: [
-          pw.Expanded(child: pw.Text(a, style: style ?? base)),
-          pw.Text(b, style: style ?? base),
-        ]);
-    doc.addPage(pw.Page(
-      pageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity, marginAll: 2 * PdfPageFormat.mm),
-      build: (ctx) => pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-        pw.Center(child: pw.Text(shop.isEmpty ? 'Soko Express Mtaani' : shop, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold))),
-        if (phone.isNotEmpty) pw.Center(child: pw.Text('Tel: $phone', style: base)),
-        if (email.isNotEmpty) pw.Center(child: pw.Text(email, style: base)),
-        if (header.isNotEmpty) pw.Center(child: pw.Text(header, style: base, textAlign: pw.TextAlign.center)),
-        pw.SizedBox(height: 4),
-        pw.Center(child: pw.Text('Served by ${s.cashier}', style: base)),
-        pw.Center(child: pw.Text(s.name, style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold))),
-        pw.Divider(thickness: 0.5),
-        for (final l in s.lines) ...[
-          row(l.name, _m(l.total), style: bold),
-          pw.Text('  ${_q(l.qty)} x ${_m(l.price)}', style: base),
-        ],
-        pw.Divider(thickness: 0.5),
-        row('TOTAL', 'KSh ${_m(s.amount)}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
-        if (s.tax > 0) row('of which tax', _m(s.tax)),
-        pw.SizedBox(height: 3),
-        for (final p in s.payments.where((p) => p.amount > 0)) ...[
-          row(p.method, _m(p.amount)),
-          if (p.ref.isNotEmpty) pw.Text('  Ref: ${p.ref}', style: base),
-        ],
-        if (s.change > 0) row('CHANGE', _m(s.change), style: bold),
-        if (s.customer.isNotEmpty) ...[pw.SizedBox(height: 3), pw.Text('Customer: ${s.customer}', style: base)],
-        pw.Divider(thickness: 0.5),
-        if (footer.isNotEmpty) pw.Center(child: pw.Text(footer, style: base, textAlign: pw.TextAlign.center)),
-        pw.Center(child: pw.Text(s.ref, style: base)),
-        pw.Center(child: pw.Text(s.date, style: base)),
-        pw.SizedBox(height: 2),
-        pw.Center(child: pw.Text('Thank you!', style: bold)),
-        pw.SizedBox(height: 12),
-      ]),
-    ));
-    return doc;
+  static String _m(double v) => v.toStringAsFixed(2);
+  static String _q(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
+  static String _e(String s) =>
+      s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+
+  static String html(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) {
+    String row(String a, String b, {bool bold = false}) =>
+        '<tr${bold ? ' class="b"' : ''}><td>${_e(a)}</td><td class="r">${_e(b)}</td></tr>';
+    final b = StringBuffer()
+      ..write('<!doctype html><html><head><meta charset="utf-8"><style>'
+          '@page{size:58mm auto;margin:0}'
+          'body{margin:0;padding:2mm;width:54mm;font-family:monospace;font-size:11px;color:#000}'
+          '.c{text-align:center}.r{text-align:right;white-space:nowrap}.b{font-weight:bold}'
+          'table{width:100%;border-collapse:collapse}td{vertical-align:top;padding:1px 0}'
+          'hr{border:0;border-top:1px dashed #000;margin:4px 0}'
+          '.big{font-size:15px;font-weight:bold}.small{font-size:10px}'
+          '</style></head><body>')
+      ..write('<div class="c big">${_e(shop.isEmpty ? 'Soko Express Mtaani' : shop)}</div>');
+    if (phone.isNotEmpty) b.write('<div class="c small">Tel: ${_e(phone)}</div>');
+    if (email.isNotEmpty) b.write('<div class="c small">${_e(email)}</div>');
+    if (header.isNotEmpty) b.write('<div class="c small">${_e(header)}</div>');
+    b
+      ..write('<div class="c small">Served by ${_e(s.cashier)}</div>')
+      ..write('<div class="c big">${_e(s.name)}</div><hr><table>');
+    for (final l in s.lines) {
+      b
+        ..write(row(l.name, _m(l.total), bold: true))
+        ..write('<tr><td class="small">&nbsp;&nbsp;${_q(l.qty)} x ${_m(l.price)}</td><td></td></tr>');
+    }
+    b
+      ..write('</table><hr><table>')
+      ..write('<tr class="big"><td>TOTAL</td><td class="r">KSh ${_m(s.amount)}</td></tr>');
+    if (s.tax > 0) b.write(row('of which tax', _m(s.tax)));
+    for (final p in s.payments.where((p) => p.amount > 0)) {
+      b.write(row(p.method, _m(p.amount)));
+      if (p.ref.isNotEmpty) b.write('<tr><td class="small" colspan="2">&nbsp;&nbsp;Ref: ${_e(p.ref)}</td></tr>');
+    }
+    if (s.change > 0) b.write(row('CHANGE', _m(s.change), bold: true));
+    b.write('</table>');
+    if (s.customer.isNotEmpty) b.write('<div class="small">Customer: ${_e(s.customer)}</div>');
+    b.write('<hr>');
+    if (footer.isNotEmpty) b.write('<div class="c small">${_e(footer)}</div>');
+    b
+      ..write('<div class="c small">${_e(s.ref)}</div>')
+      ..write('<div class="c small">${_e(s.date)}</div>')
+      ..write('<div class="c b">Thank you!</div><br><br>')
+      ..write('</body></html>');
+    return b.toString();
   }
 
-  static String _q(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
-
-  /// Opens Android printing with the receipt (choose the built-in printer once;
-  /// Android remembers it).
+  /// Opens Android printing with the receipt. The first time, choose the
+  /// built-in printer; Android remembers it.
   static Future<bool> print(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) async {
-    final doc = await build(s, shop: shop, phone: phone, email: email, header: header, footer: footer);
-    return Printing.layoutPdf(
-      name: 'Receipt ${s.name}',
-      format: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity, marginAll: 2 * PdfPageFormat.mm),
-      onLayout: (_) async => doc.save(),
-    );
+    try {
+      await _ch.invokeMethod('printHtml', {
+        'name': 'Receipt ${s.name}',
+        'html': html(s, shop: shop, phone: phone, email: email, header: header, footer: footer),
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }

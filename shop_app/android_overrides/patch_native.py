@@ -35,9 +35,39 @@ extra = '''                    "keepAlive" -> {
                         }
                         result.success(true)
                     }
+                    "printHtml" -> {
+                        val html = call.argument<String>("html") ?: ""
+                        val job = call.argument<String>("name") ?: "Receipt"
+                        runOnUiThread { printHtml(job, html) }
+                        result.success(true)
+                    }
                     else -> result.notImplemented()'''
 assert '                    else -> result.notImplemented()' in s
 s = s.replace('                    else -> result.notImplemented()', extra, 1)
+helper = '''class MainActivity : FlutterActivity() {
+    // Receipt printing through Android printing (the handheld's built-in printer service).
+    private var printView: android.webkit.WebView? = null
+
+    private fun printHtml(job: String, html: String) {
+        val wv = android.webkit.WebView(this)
+        wv.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String?) {
+                val pm = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+                val attrs = android.print.PrintAttributes.Builder()
+                    .setMediaSize(android.print.PrintAttributes.MediaSize("soko_roll58", "58 mm roll", 2283, 11693))
+                    .setMinMargins(android.print.PrintAttributes.Margins.NO_MARGINS)
+                    .setColorMode(android.print.PrintAttributes.COLOR_MODE_MONOCHROME)
+                    .build()
+                pm.print(job, view.createPrintDocumentAdapter(job), attrs)
+                printView = null
+            }
+        }
+        wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        printView = wv
+    }
+'''
+assert 'class MainActivity : FlutterActivity() {' in s
+s = s.replace('class MainActivity : FlutterActivity() {\n', helper, 1)
 open(main, 'w').write(s)
 
 open(os.path.join(src_dir, 'KeepAliveService.kt'), 'w').write('''package %s
