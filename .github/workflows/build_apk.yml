@@ -3,6 +3,11 @@ name: Build Soko Rider APK
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'customer_app/**'
+      - 'shop_app/**'
+      - '.github/workflows/build_customer.yml'
+      - '.github/workflows/build_shop.yml'
   workflow_dispatch:
 
 permissions:

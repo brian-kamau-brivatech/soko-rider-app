@@ -1,0 +1,20 @@
+name: soko_staff
+description: "Soko Shop: incoming orders, riders and order alerts for the shop counter."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.3.0
+  google_fonts: ^6.2.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png
