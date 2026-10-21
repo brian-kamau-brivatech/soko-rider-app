@@ -103,6 +103,8 @@ class ShopOrder {
   final String trackingNo;
   final String riderName;
   final String riderPhone;
+  final String deliveryCode;
+  final String receiptUrl;
   final double? riderLat;
   final double? riderLng;
 
@@ -126,6 +128,8 @@ class ShopOrder {
         trackingNo = j['dispatch'] is Map ? _s(j['dispatch']['tracking_no']) : '',
         riderName = j['dispatch'] is Map ? _s(j['dispatch']['rider_name']) : '',
         riderPhone = j['dispatch'] is Map ? _s(j['dispatch']['rider_phone']) : '',
+        deliveryCode = j['dispatch'] is Map ? _s(j['dispatch']['delivery_code']) : '',
+        receiptUrl = j['dispatch'] is Map ? absUrl(_s(j['dispatch']['receipt_url'])) : '',
         riderLat = (j['dispatch'] is Map && j['dispatch']['rider'] is Map) ? _d(j['dispatch']['rider']['lat']) : null,
         riderLng = (j['dispatch'] is Map && j['dispatch']['rider'] is Map) ? _d(j['dispatch']['rider']['lng']) : null;
 

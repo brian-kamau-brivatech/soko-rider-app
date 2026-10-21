@@ -318,22 +318,36 @@ class OdooService {
     }
   }
 
-  /// 5. Mark delivery completed in Odoo. Returns null on success, or an error message.
-  Future<String?> markOrderDelivered(String trackingNo) async {
+  /// 5. Mark delivery completed in Odoo.
+  /// Without [code]: the server sends the customer a 4-digit delivery code and
+  /// answers needCode. With [code]: delivered only if the code is right.
+  Future<DeliverResult> markOrderDelivered(String trackingNo, {String? code, bool resend = false}) async {
     try {
       final res = await _call('/api/rider/update_status', {
         ...await _creds(),
         'tracking_no': trackingNo,
         'status': 'delivered',
+        if (code != null && code.isNotEmpty) 'code': code,
+        if (resend) 'resend': true,
       });
-      if (res['success'] == true) return null;
-      return _s(res['message']).isEmpty ? 'Odoo did not accept the update.' : _s(res['message']);
+      if (res['success'] == true) return const DeliverResult();
+      return DeliverResult(
+        error: _s(res['message']).isEmpty ? 'Odoo did not accept the update.' : _s(res['message']),
+        needCode: res['need_code'] == true,
+      );
     } on OdooCallError catch (e) {
-      return e.message;
+      return DeliverResult(error: e.message);
     }
   }
 
   static String _s(dynamic v) => (v == null || v == false) ? '' : v.toString();
+}
+
+class DeliverResult {
+  final String? error;
+  final bool needCode;
+  const DeliverResult({this.error, this.needCode = false});
+  bool get ok => error == null;
 }
 
 class EarningsResult {

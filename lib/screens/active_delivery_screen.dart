@@ -181,22 +181,28 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   }
 
   Future<void> _completeDelivery() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm delivery'),
-        content: Text('Mark ${order.trackingNo} as delivered${order.customerName.isEmpty ? '' : ' to ${order.customerName}'}?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Yes, delivered')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
+    // 1. Ask Odoo to send the customer their delivery code.
     setState(() => _isCompleting = true);
-    final error = await widget.odooService.markOrderDelivered(order.trackingNo);
+    var result = await widget.odooService.markOrderDelivered(order.trackingNo);
     if (!mounted) return;
+    // 2. Rider types the code the customer reads out.
+    if (result.needCode) {
+      setState(() => _isCompleting = false);
+      final done = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => _DeliveryCodeDialog(
+          trackingNo: order.trackingNo,
+          customerName: order.customerName,
+          firstMessage: result.error ?? '',
+          submit: (code) => widget.odooService.markOrderDelivered(order.trackingNo, code: code),
+          resend: () => widget.odooService.markOrderDelivered(order.trackingNo, resend: true),
+        ),
+      );
+      if (!mounted || done != true) return;
+      result = const DeliverResult();
+    }
+    final error = result.error;
 
     if (error == null) {
       _locationService.stopStreaming();
@@ -592,6 +598,115 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
           ]),
         ),
       ),
+    );
+  }
+}
+
+
+/// Rider enters the 4-digit code the customer sees in their app.
+class _DeliveryCodeDialog extends StatefulWidget {
+  final String trackingNo;
+  final String customerName;
+  final String firstMessage;
+  final Future<DeliverResult> Function(String code) submit;
+  final Future<DeliverResult> Function() resend;
+  const _DeliveryCodeDialog({
+    required this.trackingNo,
+    required this.customerName,
+    required this.firstMessage,
+    required this.submit,
+    required this.resend,
+  });
+  @override
+  State<_DeliveryCodeDialog> createState() => _DeliveryCodeDialogState();
+}
+
+class _DeliveryCodeDialogState extends State<_DeliveryCodeDialog> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  late String _info = widget.firstMessage;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    final c = _code.text.trim();
+    if (c.length != 4) {
+      setState(() => _error = 'Enter the 4-digit code.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final r = await widget.submit(c);
+    if (!mounted) return;
+    if (r.ok) {
+      Navigator.pop(context, true);
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _error = r.error;
+      _code.clear();
+    });
+  }
+
+  Future<void> _resend() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final r = await widget.resend();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _info = r.needCode ? 'New code sent to the customer.' : (r.error ?? '');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final who = widget.customerName.isEmpty ? 'the customer' : widget.customerName;
+    return AlertDialog(
+      title: const Text('Delivery code'),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Ask $who for the 4-digit code in their Soko app (or on their order).'),
+        if (_info.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(_info, style: const TextStyle(fontSize: 13, color: Colors.black54)),
+        ],
+        const SizedBox(height: 14),
+        TextField(
+          controller: _code,
+          autofocus: true,
+          enabled: !_busy,
+          keyboardType: TextInputType.number,
+          maxLength: 4,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: 14),
+          decoration: const InputDecoration(counterText: '', hintText: '••••', border: OutlineInputBorder()),
+          onSubmitted: (_) => _confirm(),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.w600)),
+        ],
+      ]),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.pop(context, false), child: const Text('Cancel')),
+        TextButton(onPressed: _busy ? null : _resend, child: const Text('Resend code')),
+        FilledButton(
+          onPressed: _busy ? null : _confirm,
+          child: _busy
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Confirm delivered'),
+        ),
+      ],
     );
   }
 }

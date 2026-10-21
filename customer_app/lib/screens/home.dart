@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
@@ -229,10 +230,26 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
     super.initState();
     _load();
     ordersVersion.addListener(_load);
+    AppStore.instance.addListener(_onStore);
+    // Keep the banner live (rider assigned, on the way, delivery code).
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_order != null) _load();
+    });
+  }
+
+  Timer? _timer;
+  String _session = AppStore.instance.session;
+  void _onStore() {
+    if (AppStore.instance.session != _session) {
+      _session = AppStore.instance.session;
+      _load();
+    }
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
+    AppStore.instance.removeListener(_onStore);
     ordersVersion.removeListener(_load);
     super.dispose();
   }
@@ -275,7 +292,8 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(o.statusLabel, style: head(14.5, w: FontWeight.w600)),
+                Text(o.deliveryCode.isNotEmpty ? 'Rider is here · code ${o.deliveryCode}' : o.statusLabel,
+                    style: head(14.5, w: FontWeight.w600)),
                 Text('${o.name} · tap to track', style: const TextStyle(fontSize: 13, color: C.muted)),
               ]),
             ),

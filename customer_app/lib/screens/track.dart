@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,7 +27,7 @@ class _TrackScreenState extends State<TrackScreen> {
     super.initState();
     _o = widget.order;
     _refresh();
-    _poll = Timer.periodic(const Duration(seconds: 8), (_) => _refresh());
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
   }
 
   @override
@@ -35,12 +36,42 @@ class _TrackScreenState extends State<TrackScreen> {
     super.dispose();
   }
 
+  bool _codeDialogOpen = false;
+
+  /// The rider tapped Mark Delivered: alert the customer and show the code.
+  Future<void> _announceCode(String code) async {
+    HapticFeedback.heavyImpact();
+    SystemSound.play(SystemSoundType.alert);
+    if (_codeDialogOpen || !mounted) return;
+    _codeDialogOpen = true;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your rider has arrived'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Give your rider this delivery code:'),
+          const SizedBox(height: 14),
+          Text(code, style: head(40, color: C.green).copyWith(letterSpacing: 10)),
+        ]),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
+    _codeDialogOpen = false;
+  }
+
+  Future<void> _openReceipt() async {
+    final ok = await launchUrl(Uri.parse(_o.receiptUrl), mode: LaunchMode.externalApplication);
+    if (!ok && mounted) toast(context, 'Could not open the receipt.');
+  }
+
   Future<void> _refresh() async {
     try {
       final o = await ShopApi.status(_o.id, _o.token);
       if (!mounted) return;
       final hadRider = _o.riderLat != null;
+      final newCode = o.deliveryCode.isNotEmpty && o.deliveryCode != _o.deliveryCode;
       setState(() => _o = o);
+      if (newCode) _announceCode(o.deliveryCode);
       if (o.delivered || o.cancelled) _poll?.cancel();
       if (_ready && !hadRider && o.riderLat != null) _fit();
     } catch (_) {}
@@ -210,6 +241,23 @@ class _TrackScreenState extends State<TrackScreen> {
                     ),
                 ]),
               const SizedBox(height: 14),
+              if (_o.deliveryCode.isNotEmpty && !_o.delivered) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: C.green, borderRadius: BorderRadius.circular(16)),
+                  child: Row(children: [
+                    const Icon(Icons.verified_user_outlined, color: Colors.white, size: 28),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text('Delivery code\nGive it to your rider',
+                          style: TextStyle(color: Colors.white, fontSize: 13.5, height: 1.3)),
+                    ),
+                    Text(_o.deliveryCode, style: head(30, color: Colors.white).copyWith(letterSpacing: 6)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (_o.riderName.isNotEmpty)
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -254,6 +302,23 @@ class _TrackScreenState extends State<TrackScreen> {
                 ),
                 Text(money(_o.amountTotal), style: head(15, w: FontWeight.w600)),
               ]),
+              if (_o.receiptUrl.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: _openReceipt,
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    label: const Text('Download receipt'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: C.green,
+                      side: const BorderSide(color: C.line),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ],
             ]),
           ),
         ),
