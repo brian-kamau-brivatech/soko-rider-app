@@ -9,7 +9,9 @@ class ReceiptScreen extends StatefulWidget {
   final Sale sale;
   final PosSetup? setup;
   final bool autoPrint;
-  const ReceiptScreen({super.key, required this.sale, this.setup, this.autoPrint = false});
+  /// Shows "Send for dispatch" for a checked-out dispatch order.
+  final int? dispatchOrderId;
+  const ReceiptScreen({super.key, required this.sale, this.setup, this.autoPrint = false, this.dispatchOrderId});
   @override
   State<ReceiptScreen> createState() => _ReceiptScreenState();
 }
@@ -18,6 +20,23 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
   PosSetup? _setup;
   late Sale _sale = widget.sale;
   bool _printing = false;
+  bool _sending = false;
+  bool _sent = false;
+
+  Future<void> _send() async {
+    setState(() => _sending = true);
+    try {
+      final msg = await PosApi.sendForDispatch(Store.i.pin, widget.dispatchOrderId!);
+      if (!mounted) return;
+      setState(() => _sent = true);
+      toast(context, msg);
+      Store.i.refresh();
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   void initState() {
@@ -105,6 +124,20 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        if (widget.dispatchOrderId != null) ...[
+          SizedBox(
+            height: 58,
+            child: ElevatedButton.icon(
+              onPressed: _sending || _sent ? null : _send,
+              icon: Icon(_sent ? Icons.check_circle_rounded : Icons.delivery_dining_rounded),
+              label: Text(_sent ? 'Out for delivery' : (_sending ? 'Sending…' : 'Send for dispatch'),
+                  style: h(17, color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: C.green, foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF7BD66A)),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         SizedBox(
           height: 56,
           child: ElevatedButton.icon(

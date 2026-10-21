@@ -287,6 +287,7 @@ class Sale {
   final String cashier;
   final String session;
   final bool fromApp;
+  final String channel; // online | walkin
   final int count;
   final List<SalePayment> payments;
   final List<SaleLine> lines;
@@ -304,6 +305,7 @@ class Sale {
         cashier = _s(j['cashier']),
         session = _s(j['session']),
         fromApp = j['from_app'] == true,
+        channel = _s(j['channel']).isEmpty ? 'walkin' : _s(j['channel']),
         count = _i(j['count']),
         payments = ((j['payments'] as List?) ?? const [])
             .map((e) => SalePayment.fromJson(Map<String, dynamic>.from(e)))
@@ -313,22 +315,73 @@ class Sale {
             .toList();
 
   String get time => date.length >= 16 ? date.substring(11, 16) : date;
+  bool get isOnline => channel == 'online';
   String get methods => payments.where((p) => p.amount > 0).map((p) => p.method).toSet().join(' + ');
 }
 
-class SalesDay {
-  final String day;
+class SalesSummary {
   final int count;
   final double total;
   final List<SalePayment> byMethod;
+  SalesSummary.fromJson(Map<String, dynamic> j)
+      : count = _i(j['count']),
+        total = _d(j['total']),
+        byMethod = ((j['by_method'] as List?) ?? const [])
+            .map((e) => SalePayment.fromJson({'method': e['method'], 'amount': e['amount']}))
+            .toList();
+}
+
+class DayTotal {
+  final String day;
+  final double total;
+  final double online;
+  final double walkin;
+  final int count;
+  DayTotal.fromJson(Map<String, dynamic> j)
+      : day = _s(j['day']),
+        total = _d(j['total']),
+        online = _d(j['online']),
+        walkin = _d(j['walkin']),
+        count = _i(j['count']);
+}
+
+class TopProduct {
+  final String name;
+  final double qty;
+  final double total;
+  TopProduct.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        qty = _d(j['qty']),
+        total = _d(j['total']);
+}
+
+/// Sales report for a period: online orders vs walk-in.
+class SalesDay {
+  final String period;
+  final String from;
+  final String to;
+  final int count;
+  final double total;
+  final List<SalePayment> byMethod;
+  final SalesSummary online;
+  final SalesSummary walkin;
+  final List<DayTotal> days;
+  final List<TopProduct> topProducts;
   final List<Sale> orders;
   SalesDay.fromJson(Map<String, dynamic> j)
-      : day = _s(j['day']),
+      : period = _s(j['period']),
+        from = _s(j['from']),
+        to = _s(j['to']),
         count = _i(j['count']),
         total = _d(j['total']),
         byMethod = ((j['by_method'] as List?) ?? const [])
             .map((e) => SalePayment.fromJson({'method': e['method'], 'amount': e['amount']}))
             .toList(),
+        online = SalesSummary.fromJson(Map<String, dynamic>.from(j['online'] ?? const {})),
+        walkin = SalesSummary.fromJson(Map<String, dynamic>.from(j['walkin'] ?? const {})),
+        days = ((j['days'] as List?) ?? const []).map((e) => DayTotal.fromJson(Map<String, dynamic>.from(e))).toList(),
+        topProducts =
+            ((j['top_products'] as List?) ?? const []).map((e) => TopProduct.fromJson(Map<String, dynamic>.from(e))).toList(),
         orders = ((j['orders'] as List?) ?? const [])
             .map((e) => Sale.fromJson(Map<String, dynamic>.from(e)))
             .toList();
@@ -380,8 +433,9 @@ class PosApi {
 
   static Future<PosSetup> setup(String pin) async => PosSetup.fromJson(await _c('/soko/staff/pos/setup', {'pin': pin}));
 
-  static Future<MpesaFound> mpesaCheck(String pin, String phone, double amount) async {
-    final r = await _c('/soko/staff/pos/mpesa_check', {'pin': pin, 'phone': phone, 'amount': amount});
+  static Future<MpesaFound> mpesaCheck(String pin, String phone, double amount, {int? dispatchId}) async {
+    final r = await _c('/soko/staff/pos/mpesa_check',
+        {'pin': pin, 'phone': phone, 'amount': amount, if (dispatchId != null) 'order_id': dispatchId});
     return MpesaFound(r['found'] == true, _i(r['txn_id']), _s(r['receipt']));
   }
 
@@ -411,8 +465,9 @@ class PosApi {
     return Sale.fromJson(Map<String, dynamic>.from(r['order']));
   }
 
-  static Future<SalesDay> sales(String pin, {int daysAgo = 0}) async =>
-      SalesDay.fromJson(await _c('/soko/staff/pos/sales', {'pin': pin, 'days': daysAgo}));
+  /// period: today | yesterday | week | month; channel: online | walkin | null (all)
+  static Future<SalesDay> sales(String pin, {String period = 'today', String? channel}) async => SalesDay.fromJson(
+      await _c('/soko/staff/pos/sales', {'pin': pin, 'period': period, if (channel != null) 'channel': channel}));
 
   static Future<Sale> sale(String pin, int id) async =>
       Sale.fromJson(Map<String, dynamic>.from((await _c('/soko/staff/pos/sale', {'pin': pin, 'order_id': id}))['order']));
@@ -424,4 +479,57 @@ class PosApi {
       ((r['moves'] as List?) ?? const []).map((e) => StockMove.fromJson(Map<String, dynamic>.from(e))).toList(),
     );
   }
+
+  // Dispatch orders: check out when the rider is at the shop, then send.
+  static Future<DispatchCheckout> checkoutInfo(String pin, int orderId) async => DispatchCheckout.fromJson(
+      Map<String, dynamic>.from((await _c('/soko/staff/dispatch/checkout_info', {'pin': pin, 'order_id': orderId}))['info']));
+
+  static Future<Sale> dispatchCheckout(String pin,
+      {required int orderId, required String uid, required List<Map<String, dynamic>> payments}) async {
+    final r = await _c('/soko/staff/dispatch/checkout', {'pin': pin, 'order_id': orderId, 'uid': uid, 'payments': payments});
+    return Sale.fromJson(Map<String, dynamic>.from(r['order']));
+  }
+
+  static Future<String> sendForDispatch(String pin, int orderId) async =>
+      _s((await _c('/soko/staff/dispatch/send', {'pin': pin, 'order_id': orderId}))['message']);
+}
+
+class OnlinePayment {
+  final int txnId;
+  final String receipt;
+  final double amount;
+  final String phone;
+  OnlinePayment.fromJson(Map<String, dynamic> j)
+      : txnId = _i(j['txn_id']),
+        receipt = _s(j['receipt']),
+        amount = _d(j['amount']),
+        phone = _s(j['phone']);
+}
+
+class DispatchCheckout {
+  final int id;
+  final String status;
+  final String customer;
+  final String phone;
+  final bool checkedOut;
+  final bool canCheckout;
+  final bool canDispatch;
+  final Sale? sale;
+  final List<SaleLine> lines;
+  final double total;
+  final OnlinePayment? online;
+  final String note;
+  DispatchCheckout.fromJson(Map<String, dynamic> j)
+      : id = _i(j['id']),
+        status = _s(j['status']),
+        customer = _s(j['customer']),
+        phone = _s(j['phone']),
+        checkedOut = j['checked_out'] == true,
+        canCheckout = j['can_checkout'] == true,
+        canDispatch = j['can_dispatch'] == true,
+        sale = j['sale'] is Map ? Sale.fromJson(Map<String, dynamic>.from(j['sale'])) : null,
+        lines = ((j['lines'] as List?) ?? const []).map((e) => SaleLine.fromJson(Map<String, dynamic>.from(e))).toList(),
+        total = _d(j['total']),
+        online = j['online'] is Map ? OnlinePayment.fromJson(Map<String, dynamic>.from(j['online'])) : null,
+        note = _s(j['note']);
 }

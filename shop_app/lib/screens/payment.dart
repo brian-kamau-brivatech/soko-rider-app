@@ -16,7 +16,9 @@ class CartLine {
 class PaymentScreen extends StatefulWidget {
   final PosSetup setup;
   final List<CartLine> lines;
-  const PaymentScreen({super.key, required this.setup, required this.lines});
+  /// Set when checking out a dispatch order (the rider is at the shop).
+  final DispatchCheckout? dispatch;
+  const PaymentScreen({super.key, required this.setup, this.lines = const [], this.dispatch});
   @override
   State<PaymentScreen> createState() => _PaymentScreenState();
 }
@@ -36,7 +38,25 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _saving = false;
   Timer? _poll;
 
-  double get _total => double.parse(widget.lines.fold<double>(0, (a, l) => a + l.total).toStringAsFixed(2));
+  double get _total => widget.dispatch != null
+      ? widget.dispatch!.total
+      : double.parse(widget.lines.fold<double>(0, (a, l) => a + l.total).toStringAsFixed(2));
+
+  @override
+  void initState() {
+    super.initState();
+    final d = widget.dispatch;
+    if (d == null) return;
+    _phone.text = d.phone;
+    final online = d.online;
+    final mpesa = widget.setup.methods.where((m) => m.mpesa).toList();
+    // The customer already paid this order by M-Pesa: validate that payment.
+    if (online != null && mpesa.isNotEmpty && online.amount + 0.001 >= d.total) {
+      _method = mpesa.first;
+      _found = MpesaFound(true, online.txnId, online.receipt);
+      _mpesaInfo = 'Paid online by M-Pesa${online.receipt.isEmpty ? '' : ' · ${online.receipt}'} · ${ksh(online.amount)}';
+    }
+  }
   double get _tendered => double.tryParse(_cash.text.trim()) ?? 0;
 
   @override
@@ -64,7 +84,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       _mpesaInfo = '';
     });
     try {
-      final f = await PosApi.mpesaCheck(Store.i.pin, _phone.text.trim(), _total);
+      final f = await PosApi.mpesaCheck(Store.i.pin, _phone.text.trim(), _total, dispatchId: widget.dispatch?.id);
       setState(() {
         _found = f.found ? f : null;
         _mpesaInfo = f.found
@@ -125,6 +145,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
     setState(() => _saving = true);
     try {
       final amount = _method.cash ? _tendered : _total;
+      final payments = [
+        {
+          'method_id': _method.id,
+          'amount': amount,
+          if (_method.mpesa && _found != null) 'mpesa_txn_id': _found!.txnId,
+        }
+      ];
+      if (widget.dispatch != null) {
+        final sale = await PosApi.dispatchCheckout(Store.i.pin, orderId: widget.dispatch!.id, uid: _uid, payments: payments);
+        if (!mounted) return;
+        _poll?.cancel();
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => ReceiptScreen(sale: sale, setup: widget.setup, autoPrint: true, dispatchOrderId: widget.dispatch!.id),
+        ));
+        if (mounted) Navigator.of(context).pop(true);
+        return;
+      }
       final sale = await PosApi.sell(
         Store.i.pin,
         uid: _uid,
@@ -168,7 +205,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 Text(ksh(_total), style: h(30, color: Colors.white)),
               ]),
             ),
-            Text('${widget.lines.length} lines', style: const TextStyle(color: Color(0xFFC9D3E0))),
+            Text(widget.dispatch != null ? 'Dispatch order' : '${widget.lines.length} lines',
+                style: const TextStyle(color: Color(0xFFC9D3E0))),
           ]),
         ),
         const SizedBox(height: 14),
@@ -197,6 +235,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             child: Text('${_method.name}: ${ksh(_total)} will be recorded.', style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
         const SizedBox(height: 12),
+        if (widget.dispatch == null)
         Container(
           padding: const EdgeInsets.all(14),
           decoration: card(),
@@ -226,11 +265,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
             child: _saving
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                : Text('Complete sale', style: h(17, color: _ready ? Colors.white : C.muted)),
+                : Text(widget.dispatch != null ? 'Validate payment' : 'Complete sale',
+                    style: h(17, color: _ready ? Colors.white : C.muted)),
           ),
         ),
         const SizedBox(height: 8),
-        const Text('Saved as a POS order in the open session, same as the POS screen.',
+        Text(
+            widget.dispatch != null
+                ? 'Checks out the sale order in the open POS session, same as Settle in Odoo POS.'
+                : 'Saved as a POS order in the open session, same as the POS screen.',
             textAlign: TextAlign.center, style: TextStyle(color: C.muted, fontSize: 12.5)),
       ]),
     );

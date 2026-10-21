@@ -99,6 +99,12 @@ class _SellScreenState extends State<SellScreen> {
   String _qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
 
   Future<void> _charge() async {
+    // Fresh payment methods and session state from Odoo POS on every charge.
+    try {
+      final fresh = await PosApi.setup(Store.i.pin);
+      if (mounted) setState(() => _setup = fresh);
+    } catch (_) {}
+    if (!mounted) return;
     final s = _setup!;
     if (s.methods.isEmpty) {
       toast(context, 'This POS has no payment methods. Add them in Odoo POS settings.');

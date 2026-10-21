@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'payment.dart';
+import 'receipt_screen.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final int orderId;
@@ -19,6 +21,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   bool _busy = false;
   Timer? _timer;
   Set<int> _packed = {};
+  DispatchCheckout? _co;
+  bool _sending = false;
 
   @override
   void initState() {
@@ -39,6 +43,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     try {
       final o = await StaffApi.order(Store.i.pin, widget.orderId);
       if (mounted) setState(() => _o = o);
+      final co = await PosApi.checkoutInfo(Store.i.pin, widget.orderId);
+      if (mounted) setState(() => _co = co);
     } catch (e) {
       if (mounted && _o == null) setState(() => _error = '$e');
     }
@@ -70,6 +76,134 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _checkout() async {
+    final co = _co;
+    if (co == null) return;
+    setState(() => _busy = true);
+    try {
+      final setup = await PosApi.setup(Store.i.pin);
+      if (!mounted) return;
+      if (!setup.sessionOpen) {
+        toast(context, 'Open the POS session in Odoo first.');
+        return;
+      }
+      if (setup.methods.isEmpty) {
+        toast(context, 'This POS has no payment methods. Add them in Odoo POS settings.');
+        return;
+      }
+      final fresh = await PosApi.checkoutInfo(Store.i.pin, widget.orderId);
+      if (!mounted) return;
+      if (!fresh.canCheckout) {
+        setState(() => _co = fresh);
+        toast(context, fresh.checkedOut ? 'Already checked out.' : (fresh.note.isEmpty ? 'Not ready for checkout.' : fresh.note));
+        return;
+      }
+      setState(() => _busy = false);
+      await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => PaymentScreen(setup: setup, dispatch: fresh)));
+      await _load();
+      Store.i.refresh();
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _send() async {
+    setState(() => _sending = true);
+    try {
+      final msg = await PosApi.sendForDispatch(Store.i.pin, widget.orderId);
+      if (mounted) toast(context, msg);
+      await _load();
+      Store.i.refresh();
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Widget _checkoutCard(ShopOrder o) {
+    final co = _co;
+    Widget note(IconData icon, String text, {Color bg = C.blueLight, Color fg = C.blue}) => Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+          child: Row(children: [
+            Icon(icon, color: fg),
+            const SizedBox(width: 10),
+            Expanded(child: Text(text, style: TextStyle(color: fg, fontWeight: FontWeight.w600))),
+          ]),
+        );
+    if (co == null) return note(Icons.point_of_sale_rounded, 'Loading checkout…');
+    final sale = co.sale;
+    if (sale != null) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: card(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            const Icon(Icons.verified_rounded, color: C.green),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Checked out · ${sale.name}', style: h(15.5))),
+            Text(ksh(sale.amount), style: h(15.5)),
+          ]),
+          const SizedBox(height: 4),
+          Text('Paid: ${sale.payments.where((p) => p.amount > 0).map((p) => '${p.method}${p.ref.isEmpty ? '' : ' ${p.ref}'}').join(' + ')}',
+              style: const TextStyle(color: C.muted, fontSize: 13)),
+          const SizedBox(height: 12),
+          if (co.canDispatch) ...[
+            SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: _sending ? null : _send,
+                icon: const Icon(Icons.delivery_dining_rounded),
+                label: Text(_sending ? 'Sending…' : 'Send for dispatch', style: h(17, color: Colors.white)),
+                style: ElevatedButton.styleFrom(backgroundColor: C.green, foregroundColor: Colors.white),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => ReceiptScreen(sale: sale, dispatchOrderId: co.canDispatch ? o.id : null))),
+            icon: const Icon(Icons.receipt_long_rounded),
+            label: const Text('Receipt'),
+            style: OutlinedButton.styleFrom(foregroundColor: C.navy, minimumSize: const Size(0, 46)),
+          ),
+        ]),
+      );
+    }
+    if (co.canCheckout) {
+      final online = co.online;
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: card(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Rider is here · check out', style: h(16)),
+          const SizedBox(height: 8),
+          online != null
+              ? note(Icons.check_circle_rounded,
+                  'Customer paid online by M-Pesa${online.receipt.isEmpty ? '' : ' · ${online.receipt}'} · ${ksh(online.amount)}',
+                  bg: C.greenLight, fg: C.green)
+              : note(Icons.payments_outlined, 'Not paid online. Take payment at checkout (cash, M-Pesa or any POS method).',
+                  bg: C.redLight, fg: C.red),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: _busy ? null : _checkout,
+              icon: const Icon(Icons.point_of_sale_rounded),
+              label: Text('Check out · ${ksh(co.total)}', style: h(17, color: Colors.white)),
+              style: ElevatedButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
+            ),
+          ),
+        ]),
+      );
+    }
+    return note(Icons.point_of_sale_rounded,
+        co.note.isNotEmpty ? co.note : (o.isOut || o.isDone ? 'Sent for dispatch.' : 'Checkout opens when the rider is at the shop.'));
   }
 
   Future<void> _pickRider() async {
@@ -126,6 +260,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 const SizedBox(height: 14),
                 _riderCard(o),
                 const SizedBox(height: 12),
+                if (o.isPreparing) ...[_checkoutCard(o), const SizedBox(height: 12)],
                 _packList(o),
                 const SizedBox(height: 12),
                 Container(
@@ -142,19 +277,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ]),
                   ]),
                 ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: C.blueLight, borderRadius: BorderRadius.circular(14)),
-                  child: const Row(children: [
-                    Icon(Icons.point_of_sale_rounded, color: C.blue),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text('Checkout and Send to Dispatch stay in Odoo POS.',
-                          style: TextStyle(color: C.blue, fontWeight: FontWeight.w600)),
-                    ),
-                  ]),
-                ),
+                if (!o.isPreparing) ...[const SizedBox(height: 14), _checkoutCard(o)],
               ]),
             ),
     );
