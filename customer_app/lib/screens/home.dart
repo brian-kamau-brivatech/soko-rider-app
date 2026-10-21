@@ -238,10 +238,12 @@ class _ActiveOrderBannerState extends State<_ActiveOrderBanner> {
   }
 
   Future<void> _load() async {
-    final refs = AppStore.instance.orderRefs;
-    if (refs.isEmpty && !AppStore.instance.signedIn) return;
+    if (!AppStore.instance.signedIn) {
+      if (mounted) setState(() => _order = null);
+      return;
+    }
     try {
-      final list = await ShopApi.orders(refs.take(3).toList(), session: AppStore.instance.session);
+      final list = await ShopApi.orders(const [], session: AppStore.instance.session);
       final active = list.where((o) => !o.delivered && !o.cancelled && (o.paid || o.step > 0)).toList();
       if (mounted) setState(() => _order = active.isEmpty ? null : active.first);
     } catch (_) {}

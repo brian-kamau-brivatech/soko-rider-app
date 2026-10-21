@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'auth.dart';
 import 'checkout.dart';
 import 'shell.dart';
 
@@ -96,7 +97,14 @@ class CartScreen extends StatelessWidget {
               child: PrimaryButton(
                 'Checkout',
                 icon: Icons.arrow_forward_rounded,
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckoutScreen())),
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  if (!store.signedIn) {
+                    await nav.push(MaterialPageRoute(builder: (_) => const AuthScreen(startWithSignUp: false)));
+                    if (!store.signedIn) return;
+                  }
+                  nav.push(MaterialPageRoute(builder: (_) => const CheckoutScreen()));
+                },
               ),
             ),
           ]);

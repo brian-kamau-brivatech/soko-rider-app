@@ -136,6 +136,10 @@ class AppStore extends ChangeNotifier {
 
   /// Save a signed-in session and the profile the server sent back.
   Future<void> signedInWith(Map<String, dynamic> r) async {
+    name = phone = street = street2 = '';
+    lat = lng = null;
+    await _prefs.remove('c_lat');
+    await _prefs.remove('c_lng');
     session = '${r['session'] ?? ''}';
     await _prefs.setString('session', session);
     await markAuthSeen();
@@ -170,7 +174,12 @@ class AppStore extends ChangeNotifier {
 
   Future<void> signOut() async {
     session = '';
-    await _prefs.remove('session');
+    name = phone = street = street2 = '';
+    lat = lng = null;
+    orderRefs = [];
+    for (final k in ['session', 'c_name', 'c_phone', 'c_street', 'c_street2', 'c_lat', 'c_lng', 'orders']) {
+      await _prefs.remove(k);
+    }
     notifyListeners();
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'auth.dart';
 import 'shell.dart';
 import 'track.dart';
 
@@ -50,7 +51,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _known = refs.length;
     _knownSession = AppStore.instance.session;
     if (!mounted) return;
-    if (refs.isEmpty && !AppStore.instance.signedIn) {
+    if (!AppStore.instance.signedIn) {
       setState(() => _orders = []);
       return;
     }
@@ -60,7 +61,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       _error = null;
     });
     try {
-      final list = await ShopApi.orders(refs, session: AppStore.instance.session);
+      final list = await ShopApi.orders(const [], session: AppStore.instance.session);
       if (mounted) setState(() => _orders = list);
       ordersVersion.value++;
     } catch (e) {
@@ -82,7 +83,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
           children: [
             Text('My Orders', style: head(20)),
             const SizedBox(height: 14),
-            if (orders == null && _error == null)
+            if (!AppStore.instance.signedIn)
+              Padding(
+                padding: const EdgeInsets.only(top: 70),
+                child: Column(children: [
+                  Container(
+                    width: 88,
+                    height: 88,
+                    decoration: const BoxDecoration(color: C.greenLight, shape: BoxShape.circle),
+                    child: const Icon(Icons.person_outline_rounded, color: C.green, size: 40),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Sign in to see your orders', style: head(18)),
+                  const SizedBox(height: 6),
+                  const Text('Your orders are saved to your account.', style: TextStyle(color: C.muted)),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: 220,
+                    child: PrimaryButton('Sign in',
+                        onTap: () => Navigator.of(context)
+                            .push(MaterialPageRoute(builder: (_) => const AuthScreen(startWithSignUp: false)))),
+                  ),
+                ]),
+              )
+            else if (orders == null && _error == null)
               const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator(color: C.green)))
             else if (orders == null)
               ErrorRetry(_error!, _load)

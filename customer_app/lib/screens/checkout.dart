@@ -246,9 +246,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       _field(_name, 'Full name', Icons.person_outline_rounded, TextInputType.name,
                           (v) => v!.trim().length < 2 ? 'Enter your name' : null),
                       const SizedBox(height: 10),
-                      _field(_phone, 'M-Pesa phone', Icons.phone_outlined, TextInputType.phone, (v) {
+                      _field(_phone, 'Phone number', Icons.phone_outlined, TextInputType.phone, (v) {
                         final d = v!.replaceAll(RegExp(r'[^0-9]'), '');
-                        return d.length < 9 ? 'Enter the M-Pesa number, e.g. 0712 345 678' : null;
+                        return d.length < 9 ? 'Enter your phone number, e.g. 0712 345 678' : null;
                       }),
                       const SizedBox(height: 10),
                       _field(_street, 'House, street, area', Icons.home_outlined, TextInputType.streetAddress,

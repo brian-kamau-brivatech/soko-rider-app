@@ -95,7 +95,7 @@ class _TrackScreenState extends State<TrackScreen> {
     }
 
     return Scaffold(
-      body: Stack(children: [
+      body: Stack(fit: StackFit.expand, children: [
         Positioned.fill(
           child: FlutterMap(
             mapController: _map,
@@ -143,7 +143,11 @@ class _TrackScreenState extends State<TrackScreen> {
             ],
           ),
         ),
-        SafeArea(
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 10, 12, 0),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -156,6 +160,7 @@ class _TrackScreenState extends State<TrackScreen> {
               ),
             ]),
           ),
+        ),
         ),
         Positioned(
           left: 0,

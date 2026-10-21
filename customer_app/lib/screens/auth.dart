@@ -172,7 +172,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     controller: _phone,
                     keyboardType: TextInputType.phone,
                     textInputAction: TextInputAction.next,
-                    decoration: _dec('Phone number (M-Pesa)', Icons.phone_outlined, hint: '0712 345 678'),
+                    decoration: _dec('Phone number', Icons.phone_outlined, hint: '0712 345 678'),
                     validator: (v) => v!.replaceAll(RegExp(r'[^0-9]'), '').length < 9 ? 'Enter your phone number' : null,
                   ),
                   const SizedBox(height: 12),
