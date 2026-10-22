@@ -47,7 +47,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<void> _printerCheck() async {
     final i = await Receipt.printerInfo();
     if (!mounted) return;
-    final direct = i['sunmi'] == true ? 'Yes (Sunmi service)' : i['nyx'] == true ? 'Yes (Nyx service)' : 'No';
+    final direct = i['reciept'] == true
+        ? 'Yes (PrinterService)'
+        : i['sunmi'] == true
+            ? 'Yes (Sunmi service)'
+            : i['nyx'] == true
+                ? 'Yes (Nyx service)'
+                : 'No';
     final lines = <String>[
       'Device: ${i['model'] ?? '?'} · Android ${i['android'] ?? '?'}',
       'Direct printing: $direct',

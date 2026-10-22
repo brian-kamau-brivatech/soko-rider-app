@@ -5,7 +5,8 @@ Reuses the rider app's ringing code (../android_overrides/MainActivity.kt) and a
     screen is locked (the shop device stays on the charger);
   - keepScreenOn: keep the display awake while the app is open;
   - printImage: receipt image straight to the built-in printer service
-    (Sunmi woyou / Nyx), else Android printing with a preview;
+    (PrinterService "recieptservice" / Sunmi woyou / Nyx), else Android
+    printing with a preview;
   - printerInfo: which printer services this handheld has.
 """
 import glob, os, re
@@ -55,7 +56,7 @@ extra = '''                    "keepAlive" -> {
                             result.success("dialog")
                         } else {
                             directPrint(png) { kind ->
-                                if (kind == "sunmi" || kind == "nyx") {
+                                if (kind == "reciept" || kind == "sunmi" || kind == "nyx") {
                                     result.success(kind)
                                 } else {
                                     printHtml(job, imageHtml(png))
@@ -76,6 +77,7 @@ extra = '''                    "keepAlive" -> {
                         result.success(mapOf(
                             "model" to (Build.MANUFACTURER + " " + Build.MODEL),
                             "android" to Build.VERSION.RELEASE,
+                            "reciept" to pkgs.contains("recieptservice.com.recieptservice"),
                             "sunmi" to pkgs.contains("woyou.aidlservice.jiuiv5"),
                             "nyx" to pkgs.contains("net.nyx.printerservice"),
                             "ipos" to pkgs.contains("com.iposprinter.iposprinterservice"),
@@ -121,6 +123,7 @@ helper = '''class MainActivity : FlutterActivity() {
         val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size)
         if (bmp == null) { done("error"); return }
         val targets = listOf(
+            Triple("recieptservice.com.recieptservice", "class:recieptservice.com.recieptservice.service.PrinterService", "reciept"),
             Triple("woyou.aidlservice.jiuiv5", "woyou.aidlservice.jiuiv5.IWoyouService", "sunmi"),
             Triple("net.nyx.printerservice", "net.nyx.printerservice.IPrinterService", "nyx")
         )
@@ -139,8 +142,12 @@ helper = '''class MainActivity : FlutterActivity() {
                 val self = this
                 Thread {
                     val ok = try {
-                        if (kind == "sunmi") sunmiPrint(binder, bmp) else nyxPrint(binder, bmp)
-                    } catch (e: Exception) { false }
+                        when (kind) {
+                            "reciept" -> reflectPrint(pkg, "recieptservice.com.recieptservice.PrinterInterface", binder, bmp)
+                            "sunmi" -> sunmiPrint(binder, bmp)
+                            else -> nyxPrint(binder, bmp)
+                        }
+                    } catch (e: Throwable) { false }
                     activity.runOnUiThread {
                         try { activity.unbindService(self) } catch (e: Exception) {}
                         if (ok) done(kind) else tryPrinter(i + 1, targets, bmp, done)
@@ -149,8 +156,13 @@ helper = '''class MainActivity : FlutterActivity() {
             }
             override fun onServiceDisconnected(name: android.content.ComponentName?) {}
         }
+        val intent = if (action.startsWith("class:")) Intent().setClassName(pkg, action.substring(6))
+                     else Intent(action).setPackage(pkg)
+        if (action.startsWith("class:")) {
+            try { startService(intent) } catch (e: Exception) {}
+        }
         val bound = try {
-            bindService(Intent(action).setPackage(pkg), conn, Context.BIND_AUTO_CREATE)
+            bindService(intent, conn, Context.BIND_AUTO_CREATE)
         } catch (e: Exception) { false }
         if (!bound) {
             try { unbindService(conn) } catch (e: Exception) {}
@@ -190,6 +202,30 @@ helper = '''class MainActivity : FlutterActivity() {
             y += h
         }
         return out
+    }
+
+    // Printer apps whose interface file is not published: load the interface
+    // from the printer app itself and call its methods by name.
+    private fun reflectPrint(pkg: String, ifaceName: String, binder: android.os.IBinder, bmp: android.graphics.Bitmap): Boolean {
+        val pctx = createPackageContext(pkg, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
+        val stub = pctx.classLoader.loadClass(ifaceName + '$' + "Stub")
+        val api = stub.getMethod("asInterface", android.os.IBinder::class.java).invoke(null, binder) ?: return false
+        val methods = api.javaClass.methods
+        fun call(name: String, vararg args: Any?): Boolean {
+            val m = methods.firstOrNull { it.name == name && it.parameterTypes.size == args.size } ?: return false
+            m.invoke(api, *args)
+            return true
+        }
+        call("beginWork")
+        call("setAlignment", 1)
+        var printed = false
+        for (part in slices(bmp)) {
+            if (call("printBitmap", part)) printed = true else break
+        }
+        if (!printed) return false
+        call("nextLine", 3)
+        call("endWork")
+        return true
     }
 
     // IWoyouService: 3 printerInit, 9 lineWrap, 11 setAlignment, 17 printBitmap.
@@ -308,6 +344,7 @@ svc = ('        <service android:name=".KeepAliveService" android:exported="fals
 c = c.replace('</application>', svc + '    </application>', 1)
 intents = ('        <intent><action android:name="android.intent.action.DIAL" /><data android:scheme="tel" /></intent>\n'
            '        <intent><action android:name="android.printservice.PrintService" /></intent>\n'
+           '        <package android:name="recieptservice.com.recieptservice" />\n'
            '        <package android:name="woyou.aidlservice.jiuiv5" />\n'
            '        <package android:name="net.nyx.printerservice" />\n'
            '        <package android:name="com.iposprinter.iposprinterservice" />\n')
