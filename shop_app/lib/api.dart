@@ -141,13 +141,21 @@ class Board {
 class ApiError implements Exception {
   final String message;
   final bool auth;
-  ApiError(this.message, {this.auth = false});
+  /// The server wants a cashier to sign in (Odoo POS employee login is on).
+  final bool cashier;
+  ApiError(this.message, {this.auth = false, this.cashier = false});
   @override
   String toString() => message;
 }
 
 class StaffApi {
+  /// The signed-in cashier (sent with every call; the server checks it).
+  static String cashierToken = '';
+  /// Called when the server says the cashier must sign in again.
+  static void Function()? onCashierRequired;
+
   static Future<Map<String, dynamic>> _call(String path, Map<String, dynamic> params) async {
+    if (cashierToken.isNotEmpty && !params.containsKey('cashier')) params = {...params, 'cashier': cashierToken};
     http.Response r;
     try {
       r = await http
@@ -169,7 +177,9 @@ class StaffApi {
     final res = Map<String, dynamic>.from((data as Map)['result'] ?? const {});
     if (res['ok'] != true) {
       final msg = _s(res['error']);
-      throw ApiError(msg.isEmpty ? 'Something went wrong.' : msg, auth: msg.contains('PIN'));
+      final needCashier = res['cashier_required'] == true;
+      if (needCashier) onCashierRequired?.call();
+      throw ApiError(msg.isEmpty ? 'Something went wrong.' : msg, auth: msg.contains('shop PIN'), cashier: needCashier);
     }
     return res;
   }
@@ -358,7 +368,18 @@ class TopProduct {
 }
 
 /// Sales report for a period: online orders vs walk-in.
+class CashierTotal {
+  final String name;
+  final int count;
+  final double total;
+  CashierTotal.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        count = _i(j['count']),
+        total = _d(j['total']);
+}
+
 class SalesDay {
+  final List<CashierTotal> byCashier;
   final String period;
   final String from;
   final String to;
@@ -371,7 +392,10 @@ class SalesDay {
   final List<TopProduct> topProducts;
   final List<Sale> orders;
   SalesDay.fromJson(Map<String, dynamic> j)
-      : period = _s(j['period']),
+      : byCashier = ((j['by_cashier'] as List?) ?? const [])
+            .map((e) => CashierTotal.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        period = _s(j['period']),
         from = _s(j['from']),
         to = _s(j['to']),
         count = _i(j['count']),
@@ -589,6 +613,11 @@ class SessionInfo {
   final String lastClosedName;
   final String lastClosedAt;
   final SessionClosing? closing;
+  final bool cashiersOn;
+  final String cashierName;
+  final String cashierRole;
+  final bool canClose;
+  final bool canCashMove;
   SessionInfo.fromJson(Map<String, dynamic> j)
       : config = _s(j['config']),
         state = _s(j['state']),
@@ -600,7 +629,12 @@ class SessionInfo {
         openingCash = j['session'] is Map ? _d(j['session']['opening_cash']) : 0,
         lastClosedName = j['last_closed'] is Map ? _s(j['last_closed']['name']) : '',
         lastClosedAt = j['last_closed'] is Map ? _s(j['last_closed']['stop_at']) : '',
-        closing = j['closing'] is Map ? SessionClosing.fromJson(Map<String, dynamic>.from(j['closing'])) : null;
+        closing = j['closing'] is Map ? SessionClosing.fromJson(Map<String, dynamic>.from(j['closing'])) : null,
+        cashiersOn = j['cashiers_on'] == true,
+        cashierName = j['cashier'] is Map ? _s(j['cashier']['name']) : '',
+        cashierRole = j['cashier'] is Map ? _s(j['cashier']['role']) : '',
+        canClose = j['can_close'] != false,
+        canCashMove = j['can_cash_move'] != false;
 
   bool get isOpen => state == 'opened';
   bool get isClosing => state == 'closing_control';
@@ -616,11 +650,55 @@ class SessionApi {
     return (_s(r['message']), SessionInfo.fromJson(Map<String, dynamic>.from(r['info'])));
   }
 
+  /// Cash In / Cash Out (managers only when Odoo POS employee login is on).
+  static Future<(String, SessionInfo)> cashMove(String pin, {required bool cashIn, required double amount, required String reason}) async {
+    final r = await StaffApi._call('/soko/staff/pos/cash_move',
+        {'pin': pin, 'kind': cashIn ? 'in' : 'out', 'amount': amount, 'reason': reason});
+    return (_s(r['message']), SessionInfo.fromJson(Map<String, dynamic>.from(r['info'])));
+  }
+
   /// Returns the message and a short summary map of the closed session.
   static Future<(String, Map<String, dynamic>)> close(String pin, {double? countedCash, String notes = ''}) async {
     final r = await StaffApi._call('/soko/staff/pos/session_close',
         {'pin': pin, if (countedCash != null) 'counted_cash': countedCash, 'notes': notes});
     return (_s(r['message']), Map<String, dynamic>.from(r['summary'] ?? const {}));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cashiers: Odoo POS employee login (same people, roles and PINs).
+// ---------------------------------------------------------------------------
+class Cashier {
+  final int id;
+  final String name;
+  final String role; // cashier | manager
+  final bool hasPin;
+  final String job;
+  Cashier.fromJson(Map<String, dynamic> j)
+      : id = _i(j['id']),
+        name = _s(j['name']),
+        role = _s(j['role']),
+        hasPin = j['has_pin'] == true,
+        job = _s(j['job']);
+  bool get isManager => role == 'manager';
+}
+
+class CashierApi {
+  /// (enabled, cashiers). Disabled = Odoo POS employee login is off.
+  static Future<(bool, List<Cashier>)> list(String pin) async {
+    final r = await StaffApi._call('/soko/staff/pos/cashiers', {'pin': pin, 'cashier': ''});
+    return (
+      r['enabled'] == true,
+      ((r['cashiers'] as List?) ?? const []).map((e) => Cashier.fromJson(Map<String, dynamic>.from(e))).toList(),
+    );
+  }
+
+  /// Returns (token, cashier) after checking the cashier's Odoo PIN.
+  static Future<(String, Cashier)> login(String pin, int employeeId, String employeePin) async {
+    final r = await StaffApi._call('/soko/staff/pos/cashier_login',
+        {'pin': pin, 'employee_id': employeeId, 'employee_pin': employeePin, 'cashier': ''});
+    final c = Map<String, dynamic>.from(r['cashier'] ?? const {});
+    return (_s(r['token']), Cashier.fromJson({...c, 'has_pin': true}));
   }
 }
 

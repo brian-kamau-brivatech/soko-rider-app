@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../store.dart';
 import '../ui.dart';
 import 'riders.dart';
 import 'session_screen.dart';
@@ -28,6 +29,19 @@ class MoreScreen extends StatelessWidget {
       child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
         Text('More', style: h(22)),
         const SizedBox(height: 14),
+        if (Store.i.cashiersOn && Store.i.cashierName.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: card(),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              leading: const CircleAvatar(backgroundColor: C.navy, child: Icon(Icons.badge_rounded, color: Colors.white)),
+              title: Text(Store.i.cashierName, style: h(16)),
+              subtitle: Text('${Store.i.isManager ? 'Manager' : 'Cashier'} · tap to switch cashier'),
+              trailing: const Icon(Icons.logout_rounded),
+              onTap: () => Store.i.clearCashier(),
+            ),
+          ),
         item(Icons.lock_clock_rounded, 'POS session', 'Open or close the day (cash count)', const SessionScreen()),
         item(Icons.inventory_2_rounded, 'Stock', 'On hand and inventory moves', const StockScreen()),
         item(Icons.two_wheeler_rounded, 'Riders', 'Who is free, busy or offline', const _Page('Riders', RidersScreen())),

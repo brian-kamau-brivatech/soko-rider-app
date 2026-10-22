@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'cashier_screen.dart';
 
 /// Open and close the POS session, the same steps as the Odoo POS screen:
 /// opening cash count to open; counted cash and Odoo's closing to close.
+/// Everything here is done as the signed-in cashier (Odoo POS employee login):
+/// cashiers open; managers close and move cash; closing signs the cashier out.
 class SessionScreen extends StatefulWidget {
   const SessionScreen({super.key});
   @override
@@ -17,6 +20,9 @@ class _SessionScreenState extends State<SessionScreen> {
   bool _busy = false;
   final _cash = TextEditingController();
   final _notes = TextEditingController();
+  final _moveAmount = TextEditingController();
+  final _moveReason = TextEditingController();
+  bool _cashIn = true;
 
   @override
   void initState() {
@@ -28,6 +34,8 @@ class _SessionScreenState extends State<SessionScreen> {
   void dispose() {
     _cash.dispose();
     _notes.dispose();
+    _moveAmount.dispose();
+    _moveReason.dispose();
     super.dispose();
   }
 
@@ -49,7 +57,39 @@ class _SessionScreenState extends State<SessionScreen> {
 
   double? get _counted => double.tryParse(_cash.text.trim());
 
+  Future<void> _switchCashier() async {
+    await Store.i.clearCashier();
+    if (!mounted) return;
+    if (await ensureCashier(context) && mounted) _load();
+  }
+
+  Future<void> _cashMove() async {
+    final amount = double.tryParse(_moveAmount.text.trim());
+    if (amount == null || amount <= 0 || _moveReason.text.trim().isEmpty) {
+      toast(context, 'Enter the amount and a reason.');
+      return;
+    }
+    if (!await ensureCashier(context) || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final (msg, info) =
+          await SessionApi.cashMove(Store.i.pin, cashIn: _cashIn, amount: amount, reason: _moveReason.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _info = info;
+        _moveAmount.clear();
+        _moveReason.clear();
+      });
+      toast(context, msg);
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _open() async {
+    if (!await ensureCashier(context) || !mounted) return;
     final cash = _counted;
     if (cash == null) {
       toast(context, 'Enter the opening cash in the drawer.');
@@ -73,6 +113,7 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   Future<void> _close() async {
+    if (!await ensureCashier(context) || !mounted) return;
     final i = _info;
     final c = i?.closing;
     if (i == null || c == null) return;
@@ -125,6 +166,8 @@ class _SessionScreenState extends State<SessionScreen> {
           actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
         ),
       );
+      // Like closing Odoo POS: the cashier is signed out.
+      await Store.i.clearCashier();
       await _load();
     } on ApiError catch (e) {
       if (mounted) toast(context, e.message);
@@ -132,6 +175,56 @@ class _SessionScreenState extends State<SessionScreen> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  Widget _cashierRow(SessionInfo i) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: card(),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: i.cashierRole == 'manager' ? C.navy : C.green,
+            child: const Icon(Icons.badge_rounded, color: Colors.white),
+          ),
+          title: Text(i.cashierName.isEmpty ? 'No cashier signed in' : i.cashierName, style: h(15.5)),
+          subtitle: Text(i.cashierName.isEmpty
+              ? 'Sign in to open, close or move cash'
+              : (i.cashierRole == 'manager' ? 'Manager' : 'Cashier') + ' · everything here is done as this person'),
+          trailing: TextButton(onPressed: _busy ? null : _switchCashier, child: Text(i.cashierName.isEmpty ? 'Sign in' : 'Switch')),
+        ),
+      );
+
+  Widget _cashMoveCard(SessionInfo i) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: card(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Cash in / out', style: h(17)),
+          const SizedBox(height: 8),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: true, label: Text('Cash in'), icon: Icon(Icons.south_west_rounded)),
+              ButtonSegment(value: false, label: Text('Cash out'), icon: Icon(Icons.north_east_rounded)),
+            ],
+            selected: {_cashIn},
+            onSelectionChanged: (v) => setState(() => _cashIn = v.first),
+          ),
+          TextField(
+            controller: _moveAmount,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Amount', prefixText: 'KSh '),
+          ),
+          TextField(
+            controller: _moveReason,
+            decoration: const InputDecoration(labelText: 'Reason', prefixIcon: Icon(Icons.notes_rounded)),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _cashMove,
+            icon: const Icon(Icons.payments_rounded),
+            label: const Text('Record'),
+            style: OutlinedButton.styleFrom(foregroundColor: C.navy, minimumSize: const Size(0, 48)),
+          ),
+        ]),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -151,7 +244,9 @@ class _SessionScreenState extends State<SessionScreen> {
               child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
                 _statusCard(i),
                 const SizedBox(height: 14),
+                if (i.cashiersOn) _cashierRow(i),
                 if (i.canOpen) _openCard(i),
+                if (i.isOpen && i.canCashMove && (!i.cashiersOn || i.cashierName.isNotEmpty)) _cashMoveCard(i),
                 if ((i.isOpen || i.isClosing) && i.closing != null) _closeCard(i, i.closing!),
               ]),
             ),
@@ -256,6 +351,14 @@ class _SessionScreenState extends State<SessionScreen> {
           child: Text('Unpaid POS orders are still open: ${c.drafts.join(', ')}. Pay or cancel them in Odoo POS before closing.',
               style: const TextStyle(color: C.red, fontWeight: FontWeight.w600)),
         ),
+      if (i.cashiersOn && i.cashierName.isNotEmpty && !i.canClose)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: C.amberLight, borderRadius: BorderRadius.circular(14)),
+          child: Text('${i.cashierName} is a cashier. Only a POS manager can close the session (same as Odoo POS). Tap Switch.',
+              style: const TextStyle(color: C.amber, fontWeight: FontWeight.w600)),
+        ),
       Container(
         padding: const EdgeInsets.all(14),
         decoration: card(),
@@ -294,7 +397,9 @@ class _SessionScreenState extends State<SessionScreen> {
           SizedBox(
             height: 56,
             child: ElevatedButton.icon(
-              onPressed: _busy || c.drafts.isNotEmpty || tooBig || (c.hasCash && counted == null) ? null : _close,
+              onPressed: _busy || (i.cashiersOn && i.cashierName.isNotEmpty && !i.canClose) || c.drafts.isNotEmpty || tooBig || (c.hasCash && counted == null)
+                  ? null
+                  : _close,
               icon: const Icon(Icons.lock_rounded),
               label: Text(_busy ? 'Closing…' : 'Close session', style: h(17, color: Colors.white)),
               style: ElevatedButton.styleFrom(

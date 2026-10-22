@@ -46,6 +46,49 @@ class Store extends ChangeNotifier {
 
   bool get signedIn => pin.isNotEmpty;
 
+  // Cashier (Odoo POS employee login). Only needed when it is on in Odoo.
+  bool cashiersOn = false;
+  String cashierToken = '';
+  String cashierName = '';
+  String cashierRole = '';
+  bool get needsCashier => signedIn && cashiersOn && cashierToken.isEmpty;
+  bool get isManager => !cashiersOn || cashierRole == 'manager';
+
+  Future<void> setCashier(String token, String name, String role) async {
+    cashierToken = token;
+    cashierName = name;
+    cashierRole = role;
+    StaffApi.cashierToken = token;
+    await _p.setString('cashier_token', token);
+    await _p.setString('cashier_name', name);
+    await _p.setString('cashier_role', role);
+    notifyListeners();
+  }
+
+  /// Back to the cashier list (switch user / lock).
+  Future<void> clearCashier() async {
+    cashierToken = '';
+    cashierName = '';
+    cashierRole = '';
+    StaffApi.cashierToken = '';
+    await _p.remove('cashier_token');
+    await _p.remove('cashier_name');
+    await _p.remove('cashier_role');
+    notifyListeners();
+  }
+
+  /// Ask Odoo whether POS employee login is on (it can change any time).
+  Future<void> checkCashiers() async {
+    if (!signedIn) return;
+    try {
+      final (on, _) = await CashierApi.list(pin);
+      cashiersOn = on;
+      await _p.setBool('cashiers_on', on);
+      if (!on && cashierToken.isNotEmpty) await clearCashier();
+      notifyListeners();
+    } catch (_) {}
+  }
+
   Future<void> init() async {
     _p = await SharedPreferences.getInstance();
     pin = _p.getString('pin') ?? '';
@@ -58,6 +101,16 @@ class Store extends ChangeNotifier {
     chimeRiderAtShop = _p.getBool('chimeRiderAtShop') ?? true;
     chimePaid = _p.getBool('chimePaid') ?? true;
     screenOn = _p.getBool('screenOn') ?? true;
+    cashiersOn = _p.getBool('cashiers_on') ?? false;
+    cashierToken = _p.getString('cashier_token') ?? '';
+    cashierName = _p.getString('cashier_name') ?? '';
+    cashierRole = _p.getString('cashier_role') ?? '';
+    StaffApi.cashierToken = cashierToken;
+    StaffApi.onCashierRequired = () {
+      cashiersOn = true;
+      _p.setBool('cashiers_on', true);
+      clearCashier();
+    };
     try {
       _seen.addAll((jsonDecode(_p.getString('seen') ?? '[]') as List).map((e) => '$e'));
       _primed = _seen.isNotEmpty;
@@ -71,6 +124,7 @@ class Store extends ChangeNotifier {
     await _p.setString('shop', shopName);
     notifyListeners();
     start();
+    await checkCashiers();
   }
 
   Future<void> signOut() async {
@@ -78,6 +132,7 @@ class Store extends ChangeNotifier {
     pin = '';
     board = null;
     await _p.remove('pin');
+    await clearCashier();
     await Alerts.keepAlive(false);
     notifyListeners();
   }
@@ -90,6 +145,7 @@ class Store extends ChangeNotifier {
     _timer?.cancel();
     _timer = Timer.periodic(AppConfig.pollEvery, (_) => refresh());
     refresh();
+    checkCashiers();
   }
 
   void stop() {

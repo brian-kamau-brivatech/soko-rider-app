@@ -140,6 +140,10 @@ class _SalesScreenState extends State<SalesScreen> {
               const SizedBox(width: 10),
               Expanded(child: _channelCard('Walk-in', Icons.storefront_rounded, C.blue, C.blueLight, d.walkin, 'walkin')),
             ]),
+            if (d.byCashier.length > 1 || (d.byCashier.length == 1 && Store.i.cashiersOn)) ...[
+              const SizedBox(height: 14),
+              _cashierCard(d),
+            ],
             if (d.days.length > 1) ...[
               const SizedBox(height: 14),
               _daysCard(d),
@@ -248,6 +252,27 @@ class _SalesScreenState extends State<SalesScreen> {
         ]),
       );
 
+  Widget _cashierCard(SalesDay d) => Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+        decoration: card(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('By cashier', style: h(16)),
+          const SizedBox(height: 6),
+          for (final c in d.byCashier)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                const Icon(Icons.badge_outlined, size: 18, color: C.navy),
+                const SizedBox(width: 8),
+                Expanded(child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
+                Text('${c.count} orders', style: const TextStyle(color: C.muted, fontSize: 12.5)),
+                const SizedBox(width: 12),
+                SizedBox(width: 92, child: Text(ksh(c.total), textAlign: TextAlign.right, style: h(13.5, w: FontWeight.w800))),
+              ]),
+            ),
+        ]),
+      );
+
   Widget _topCard(SalesDay d) => Container(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
         decoration: card(),
@@ -283,6 +308,7 @@ class _SalesScreenState extends State<SalesScreen> {
                 style: h(14.5, w: FontWeight.w700)),
             subtitle: Text([
               s.isOnline ? 'Online' : 'Walk-in',
+              if (s.cashier.isNotEmpty) s.cashier,
               '${s.count} items',
               if (s.methods.isNotEmpty) s.methods,
               if (s.customer.isNotEmpty) s.customer,

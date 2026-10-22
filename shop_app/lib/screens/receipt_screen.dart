@@ -3,6 +3,7 @@ import '../api.dart';
 import '../receipt.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'cashier_screen.dart';
 
 /// Shows a POS receipt and prints it on the handheld printer.
 class ReceiptScreen extends StatefulWidget {
@@ -24,6 +25,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
   bool _sent = false;
 
   Future<void> _send() async {
+    if (!await ensureCashier(context) || !mounted) return;
     setState(() => _sending = true);
     try {
       final msg = await PosApi.sendForDispatch(Store.i.pin, widget.dispatchOrderId!);

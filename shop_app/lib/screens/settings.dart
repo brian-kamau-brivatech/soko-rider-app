@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../alerts.dart';
+import '../api.dart';
+import '../receipt.dart';
 import '../store.dart';
 import '../ui.dart';
 
@@ -11,12 +13,61 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
   Map<String, bool> _perm = const {};
+  bool _direct = true;
+  bool _testing = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _check();
+    Receipt.directEnabled().then((v) {
+      if (mounted) setState(() => _direct = v);
+    });
+  }
+
+  Future<void> _testPrint() async {
+    setState(() => _testing = true);
+    final now = DateTime.now().toString().substring(0, 16);
+    final sale = Sale.fromJson({
+      'id': 0, 'name': 'TEST PRINT', 'ref': 'Printer test', 'date': now, 'amount': 0, 'state': 'paid',
+      'cashier': Store.i.cashierName.isEmpty ? 'Soko Shop' : Store.i.cashierName,
+      'payments': [], 'lines': [{'name': 'Printer test', 'qty': 1, 'price': 0, 'total': 0}],
+    });
+    final ok = await Receipt.print(sale);
+    if (!mounted) return;
+    setState(() => _testing = false);
+    toast(context, !ok
+        ? 'Could not print.'
+        : Receipt.lastMethod == 'dialog'
+            ? 'Printed with the Android print screen (no direct printer service found).'
+            : 'Printed directly (${Receipt.lastMethod}).');
+  }
+
+  Future<void> _printerCheck() async {
+    final i = await Receipt.printerInfo();
+    if (!mounted) return;
+    final direct = i['sunmi'] == true ? 'Yes (Sunmi service)' : i['nyx'] == true ? 'Yes (Nyx service)' : 'No';
+    final lines = <String>[
+      'Device: ${i['model'] ?? '?'} · Android ${i['android'] ?? '?'}',
+      'Direct printing: $direct',
+      if (i['ipos'] == true) 'iPos printer service found (send this screen to Claude to add it).',
+      '',
+      'Printer apps:',
+      ...((i['packages'] as List?) ?? const []).map((e) => '• $e'),
+      '',
+      'Android print services:',
+      ...((i['printServices'] as List?) ?? const []).map((e) => '• $e'),
+      if (i['error'] != null) 'Error: ${i['error']}',
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Printer check'),
+        content: SingleChildScrollView(child: SelectableText(lines.join('\n'))),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
   }
 
   @override
@@ -79,6 +130,33 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               _perm1('Show over lock screen', _perm['fullScreen'], Alerts.openFullScreenSettings),
               _perm1('Keep running when locked', _perm['battery'], Alerts.openBatterySettings,
                   hint: 'Choose Soko Shop → Unrestricted / Don\'t optimise'),
+            ]),
+            _section('Printing', [
+              SwitchListTile(
+                activeColor: C.green,
+                title: const Text('Print straight away'),
+                subtitle: const Text('No print preview when the printer service allows it.'),
+                value: _direct,
+                onChanged: (v) async {
+                  await Receipt.setDirect(v);
+                  setState(() => _direct = v);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print_rounded, color: C.green),
+                title: const Text('Test print'),
+                subtitle: const Text('Prints a short receipt with the logo.'),
+                trailing: _testing
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: C.green))
+                    : null,
+                onTap: _testing ? null : _testPrint,
+              ),
+              ListTile(
+                leading: const Icon(Icons.manage_search_rounded, color: C.navy),
+                title: const Text('Printer check'),
+                subtitle: const Text('Which printer service this handheld has.'),
+                onTap: _printerCheck,
+              ),
             ]),
             _section('Shop', [
               ListTile(

@@ -3,6 +3,7 @@ import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
 import 'payment.dart';
+import 'cashier_screen.dart';
 import 'session_screen.dart';
 
 /// Sell at the counter: products and prices come from the Odoo POS.
@@ -100,6 +101,7 @@ class _SellScreenState extends State<SellScreen> {
   String _qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
 
   Future<void> _charge() async {
+    if (!await ensureCashier(context) || !mounted) return;
     // Fresh payment methods and session state from Odoo POS on every charge.
     try {
       final fresh = await PosApi.setup(Store.i.pin);
@@ -215,7 +217,12 @@ class _SellScreenState extends State<SellScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Store.i,
+        builder: (context, _) => Store.i.needsCashier ? const CashierScreen() : _sellBody(context),
+      );
+
+  Widget _sellBody(BuildContext context) {
     final s = _setup;
     final q = _q.trim().toLowerCase();
     final products = (s?.products ?? const <PosProduct>[])
@@ -237,6 +244,13 @@ class _SellScreenState extends State<SellScreen> {
                         style: TextStyle(fontSize: 12.5, color: s.sessionOpen ? C.muted : C.red, fontWeight: FontWeight.w600)),
                 ]),
               ),
+              if (Store.i.cashiersOn && Store.i.cashierName.isNotEmpty)
+                ActionChip(
+                  avatar: const Icon(Icons.badge_rounded, size: 18),
+                  label: Text(Store.i.cashierName.split(' ').first),
+                  tooltip: 'Switch cashier',
+                  onPressed: () => Store.i.clearCashier(),
+                ),
               IconButton(tooltip: 'Reload products', onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded)),
             ]),
           ),

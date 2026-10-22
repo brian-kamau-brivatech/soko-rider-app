@@ -1,72 +1,201 @@
+import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 
-/// Prints a POS receipt on the handheld's built-in printer through Android
-/// printing (native code in MainActivity), on a 58 mm roll.
+/// Prints POS receipts on the handheld's built-in printer.
+///
+/// The receipt (with the Soko logo) is drawn as one black-and-white image,
+/// 384 dots wide (58 mm roll). It goes straight to the printer through the
+/// printer service when the device has one the app knows (Sunmi or Nyx);
+/// otherwise Android printing opens with the same image.
 class Receipt {
   static const _ch = MethodChannel('soko/alert');
+  static const width = 384.0;
+
+  /// How the last receipt was printed: sunmi | nyx | dialog | error.
+  static String lastMethod = '';
 
   static String _m(double v) => v.toStringAsFixed(2);
   static String _q(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
-  static String _e(String s) =>
-      s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
-  static String html(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) {
-    String row(String a, String b, {bool bold = false}) =>
-        '<tr${bold ? ' class="b"' : ''}><td>${_e(a)}</td><td class="r">${_e(b)}</td></tr>';
-    final b = StringBuffer()
-      ..write('<!doctype html><html><head><meta charset="utf-8"><style>'
-          '@page{size:58mm auto;margin:0}'
-          'body{margin:0;padding:2mm;width:54mm;font-family:monospace;font-size:11px;color:#000}'
-          '.c{text-align:center}.r{text-align:right;white-space:nowrap}.b{font-weight:bold}'
-          'table{width:100%;border-collapse:collapse}td{vertical-align:top;padding:1px 0}'
-          'hr{border:0;border-top:1px dashed #000;margin:4px 0}'
-          '.big{font-size:15px;font-weight:bold}.small{font-size:10px}'
-          '</style></head><body>')
-      ..write('<div class="c big">${_e(shop.isEmpty ? 'Soko Express Mtaani' : shop)}</div>');
-    if (phone.isNotEmpty) b.write('<div class="c small">Tel: ${_e(phone)}</div>');
-    if (email.isNotEmpty) b.write('<div class="c small">${_e(email)}</div>');
-    if (header.isNotEmpty) b.write('<div class="c small">${_e(header)}</div>');
-    b
-      ..write('<div class="c small">Served by ${_e(s.cashier)}</div>')
-      ..write('<div class="c big">${_e(s.name)}</div><hr><table>');
-    for (final l in s.lines) {
-      b
-        ..write(row(l.name, _m(l.total), bold: true))
-        ..write('<tr><td class="small">&nbsp;&nbsp;${_q(l.qty)} x ${_m(l.price)}</td><td></td></tr>');
-    }
-    b
-      ..write('</table><hr><table>')
-      ..write('<tr class="big"><td>TOTAL</td><td class="r">KSh ${_m(s.amount)}</td></tr>');
-    if (s.tax > 0) b.write(row('of which tax', _m(s.tax)));
-    for (final p in s.payments.where((p) => p.amount > 0)) {
-      b.write(row(p.method, _m(p.amount)));
-      if (p.ref.isNotEmpty) b.write('<tr><td class="small" colspan="2">&nbsp;&nbsp;Ref: ${_e(p.ref)}</td></tr>');
-    }
-    if (s.change > 0) b.write(row('CHANGE', _m(s.change), bold: true));
-    b.write('</table>');
-    if (s.customer.isNotEmpty) b.write('<div class="small">Customer: ${_e(s.customer)}</div>');
-    b.write('<hr>');
-    if (footer.isNotEmpty) b.write('<div class="c small">${_e(footer)}</div>');
-    b
-      ..write('<div class="c small">${_e(s.ref)}</div>')
-      ..write('<div class="c small">${_e(s.date)}</div>')
-      ..write('<div class="c b">Thank you!</div><br><br>')
-      ..write('</body></html>');
-    return b.toString();
+  static ui.Image? _logo;
+  static Future<ui.Image?> _loadLogo() async {
+    if (_logo != null) return _logo;
+    try {
+      final data = await rootBundle.load('assets/logo.png');
+      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List(), targetWidth: 320);
+      _logo = (await codec.getNextFrame()).image;
+    } catch (_) {}
+    return _logo;
   }
 
-  /// Opens Android printing with the receipt. The first time, choose the
-  /// built-in printer; Android remembers it.
+  /// Direct printing on (default) or always show Android's print preview.
+  static Future<bool> directEnabled() async {
+    try {
+      return (await SharedPreferences.getInstance()).getBool('print_direct') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<void> setDirect(bool on) async => (await SharedPreferences.getInstance()).setBool('print_direct', on);
+
+  // ---------------------------------------------------------------------------
+  // Drawing
+  // ---------------------------------------------------------------------------
+  static TextPainter _tp(String text, double size, {bool bold = false, TextAlign align = TextAlign.left, double max = width - 16}) {
+    final p = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: const Color(0xFF000000), fontSize: size, fontWeight: bold ? FontWeight.w800 : FontWeight.w500, height: 1.2),
+      ),
+      textAlign: align,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: max);
+    return p;
+  }
+
+  /// Builds the receipt image as PNG bytes.
+  static Future<Uint8List> image(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) async {
+    const pad = 8.0;
+    const inner = width - pad * 2;
+    final ops = <(double, void Function(Canvas, double))>[];
+
+    void gap(double h) => ops.add((h, (c, y) {}));
+    void center(String t, double size, {bool bold = false}) {
+      if (t.trim().isEmpty) return;
+      final p = _tp(t, size, bold: bold, align: TextAlign.center, max: inner);
+      ops.add((p.height, (c, y) => p.paint(c, Offset(pad + (inner - p.width) / 2, y))));
+    }
+
+    void row(String left, String right, double size, {bool bold = false, bool boldLeft = false}) {
+      final r = _tp(right, size, bold: bold);
+      final l = _tp(left, size, bold: bold || boldLeft, max: inner - r.width - 10);
+      final h = l.height > r.height ? l.height : r.height;
+      ops.add((h, (c, y) {
+        l.paint(c, Offset(pad, y));
+        r.paint(c, Offset(width - pad - r.width, y));
+      }));
+    }
+
+    void left(String t, double size) {
+      final p = _tp(t, size, max: inner);
+      ops.add((p.height, (c, y) => p.paint(c, Offset(pad, y))));
+    }
+
+    void dashes() => ops.add((14.0, (c, y) {
+          final paint = Paint()
+            ..color = const Color(0xFF000000)
+            ..strokeWidth = 2;
+          for (var x = pad; x < width - pad; x += 10) {
+            c.drawLine(Offset(x, y + 7), Offset(x + 5, y + 7), paint);
+          }
+        }));
+
+    final logo = await _loadLogo();
+    if (logo != null) {
+      final h = logo.height * (320 / logo.width);
+      ops.add((h, (c, y) {
+        c.drawImageRect(logo, Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+            Rect.fromLTWH((width - 320) / 2, y, 320, h), Paint()..filterQuality = FilterQuality.high);
+      }));
+      gap(6);
+    } else {
+      center(shop.isEmpty ? 'Soko Express Mtaani' : shop, 28, bold: true);
+    }
+    if (phone.isNotEmpty) center('Tel: $phone', 19);
+    if (email.isNotEmpty) center(email, 19);
+    if (header.isNotEmpty) center(header, 19);
+    center('Served by ${s.cashier}', 19);
+    gap(4);
+    center(s.name, 27, bold: true);
+    dashes();
+    for (final l in s.lines) {
+      row(l.name, _m(l.total), 22, boldLeft: true);
+      left('   ${_q(l.qty)} x ${_m(l.price)}', 19);
+      gap(3);
+    }
+    dashes();
+    row('TOTAL', 'KSh ${_m(s.amount)}', 28, bold: true);
+    if (s.tax > 0) row('of which tax', _m(s.tax), 19);
+    for (final p in s.payments.where((p) => p.amount > 0)) {
+      row(p.method, _m(p.amount), 21);
+      if (p.ref.isNotEmpty) left('   Ref: ${p.ref}', 19);
+    }
+    if (s.change > 0) row('CHANGE', _m(s.change), 23, bold: true);
+    if (s.customer.isNotEmpty) {
+      gap(4);
+      left('Customer: ${s.customer}', 20);
+    }
+    dashes();
+    if (footer.isNotEmpty) center(footer, 19);
+    center(s.ref, 19);
+    center(s.date, 19);
+    gap(4);
+    center('Thank you!', 24, bold: true);
+    gap(70); // room to tear the paper
+
+    final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec, Rect.fromLTWH(0, 0, width, total));
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, total), Paint()..color = const Color(0xFFFFFFFF));
+    var y = 0.0;
+    for (final o in ops) {
+      o.$2(canvas, y);
+      y += o.$1;
+    }
+    final img = await rec.endRecording().toImage(width.toInt(), total.toInt());
+    return _blackAndWhite(img);
+  }
+
+  /// Thermal printers print black or nothing: make every dot black or white.
+  static Future<Uint8List> _blackAndWhite(ui.Image img) async {
+    final raw = (await img.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
+    for (var i = 0; i < raw.length; i += 4) {
+      final lum = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+      final v = (raw[i + 3] > 40 && lum < 175) ? 0 : 255;
+      raw[i] = v;
+      raw[i + 1] = v;
+      raw[i + 2] = v;
+      raw[i + 3] = 255;
+    }
+    final done = Completer<ui.Image>();
+    ui.decodeImageFromPixels(raw, img.width, img.height, ui.PixelFormat.rgba8888, done.complete);
+    final bw = await done.future;
+    return (await bw.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Printing
+  // ---------------------------------------------------------------------------
   static Future<bool> print(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) async {
     try {
-      await _ch.invokeMethod('printHtml', {
+      final png = await image(s, shop: shop, phone: phone, email: email, header: header, footer: footer);
+      final direct = await directEnabled();
+      final how = await _ch.invokeMethod<String>('printImage', <String, dynamic>{
+        'png': png,
         'name': 'Receipt ${s.name}',
-        'html': html(s, shop: shop, phone: phone, email: email, header: header, footer: footer),
+        'direct': direct,
       });
-      return true;
+      lastMethod = how ?? 'error';
+      return lastMethod != 'error';
     } catch (_) {
+      lastMethod = 'error';
       return false;
+    }
+  }
+
+  /// What printer services this handheld has (Settings > Printer check).
+  static Future<Map<String, dynamic>> printerInfo() async {
+    try {
+      final r = await _ch.invokeMethod('printerInfo');
+      return Map<String, dynamic>.from(r as Map);
+    } catch (e) {
+      return {'error': '$e'};
     }
   }
 }

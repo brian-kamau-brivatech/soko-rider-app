@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import 'cashier_screen.dart';
 import 'payment.dart';
 import 'receipt_screen.dart';
 
@@ -81,6 +82,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Future<void> _checkout() async {
     final co = _co;
     if (co == null) return;
+    if (!await ensureCashier(context) || !mounted) return;
     setState(() => _busy = true);
     try {
       final setup = await PosApi.setup(Store.i.pin);
@@ -112,6 +114,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _send() async {
+    if (!await ensureCashier(context) || !mounted) return;
     setState(() => _sending = true);
     try {
       final msg = await PosApi.sendForDispatch(Store.i.pin, widget.orderId);
