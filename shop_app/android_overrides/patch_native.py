@@ -48,19 +48,23 @@ extra = '''                    "keepAlive" -> {
                     "printImage" -> {
                         val png = call.argument<ByteArray>("png")
                         val job = call.argument<String>("name") ?: "Receipt"
-                        val direct = call.argument<Boolean>("direct") ?: true
+                        // auto | dialog | one printer id from printerInfo
+                        val choice = call.argument<String>("printer")
+                            ?: (if (call.argument<Boolean>("direct") == false) "dialog" else "auto")
                         if (png == null) {
                             result.success("error")
-                        } else if (!direct) {
+                        } else if (choice == "dialog") {
                             runOnUiThread { printHtml(job, imageHtml(png)) }
                             result.success("dialog")
                         } else {
-                            directPrint(png) { kind ->
-                                if (kind == "reciept" || kind == "sunmi" || kind == "nyx") {
-                                    result.success(kind)
-                                } else {
+                            val all = discoverPrinters()
+                            val picked = if (choice == "auto") all else all.filter { printerId(it) == choice }.ifEmpty { all }
+                            directPrint(png, picked) { kind ->
+                                if (kind == "none" || kind == "error") {
                                     printHtml(job, imageHtml(png))
                                     result.success("dialog")
+                                } else {
+                                    result.success(kind)
                                 }
                             }
                         }
@@ -74,13 +78,15 @@ extra = '''                    "keepAlive" -> {
                             pm.queryIntentServices(Intent("android.printservice.PrintService"), 0)
                                 .map { it.serviceInfo.packageName + "/" + it.serviceInfo.name }
                         } catch (e: Exception) { emptyList<String>() }
+                        val printers = discoverPrinters().map { t ->
+                            val app = try { pm.getApplicationLabel(pm.getApplicationInfo(t.first, 0)).toString() } catch (e: Exception) { t.first }
+                            val kindName = when (t.third) { "nyx" -> "Built-in printer"; "sunmi" -> "Sunmi printer"; else -> "Printer service" }
+                            mapOf("id" to printerId(t), "label" to "$kindName ($app)", "package" to t.first)
+                        }
                         result.success(mapOf(
                             "model" to (Build.MANUFACTURER + " " + Build.MODEL),
                             "android" to Build.VERSION.RELEASE,
-                            "reciept" to pkgs.contains("recieptservice.com.recieptservice"),
-                            "sunmi" to pkgs.contains("woyou.aidlservice.jiuiv5"),
-                            "nyx" to pkgs.contains("net.nyx.printerservice"),
-                            "ipos" to pkgs.contains("com.iposprinter.iposprinterservice"),
+                            "printers" to printers,
                             "packages" to hits,
                             "printServices" to services
                         ))
@@ -119,20 +125,54 @@ helper = '''class MainActivity : FlutterActivity() {
 
     // Direct printing through the handheld's printer service (no preview).
     // Binder calls follow the vendors' AIDL files (method order = transaction code).
-    private fun directPrint(png: ByteArray, done: (String) -> Unit) {
+    private fun printerId(t: Triple<String, String, String>): String = t.third + "@" + t.first
+
+    // Printers the app can print to without a preview: (package, how to bind, kind).
+    // Finds re-branded printer apps too (e.g. com.incar.printerservice = Nyx engine).
+    private fun discoverPrinters(): List<Triple<String, String, String>> {
+        val pm = packageManager
+        val out = linkedMapOf<String, Triple<String, String, String>>()
+        fun add(pkg: String, spec: String, kind: String) {
+            val key = kind + "@" + pkg
+            if (!out.containsKey(key)) out[key] = Triple(pkg, spec, kind)
+        }
+        fun byAction(action: String, kind: String) {
+            try {
+                for (r in pm.queryIntentServices(Intent(action), 0)) {
+                    add(r.serviceInfo.packageName, "cls:" + r.serviceInfo.name + "#" + action, kind)
+                }
+            } catch (e: Exception) {}
+        }
+        byAction("net.nyx.printerservice.IPrinterService", "nyx")
+        byAction("woyou.aidlservice.jiuiv5.IWoyouService", "sunmi")
+        val installed = try { pm.getInstalledPackages(0).map { it.packageName } } catch (e: Exception) { emptyList<String>() }
+        for (pkg in installed.filter { it.lowercase().contains("printerservice") }) {
+            if (out.containsKey("nyx@" + pkg)) continue
+            val services = try {
+                pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_SERVICES).services
+            } catch (e: Exception) { null } ?: continue
+            for (sv in services) {
+                val n = sv.name
+                if (n.contains("Plugin") || !n.endsWith("PrinterService")) continue
+                add(pkg, "cls:" + n + "#net.nyx.printerservice.IPrinterService", "nyx")
+                break
+            }
+        }
+        if (installed.contains("recieptservice.com.recieptservice")) {
+            add("recieptservice.com.recieptservice", "cls:recieptservice.com.recieptservice.service.PrinterService", "reciept")
+        }
+        return out.values.toList()
+    }
+
+    private fun directPrint(png: ByteArray, targets: List<Triple<String, String, String>>, done: (String) -> Unit) {
         val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size)
         if (bmp == null) { done("error"); return }
-        val targets = listOf(
-            Triple("recieptservice.com.recieptservice", "class:recieptservice.com.recieptservice.service.PrinterService", "reciept"),
-            Triple("woyou.aidlservice.jiuiv5", "woyou.aidlservice.jiuiv5.IWoyouService", "sunmi"),
-            Triple("net.nyx.printerservice", "net.nyx.printerservice.IPrinterService", "nyx")
-        )
         tryPrinter(0, targets, bmp, done)
     }
 
     private fun tryPrinter(i: Int, targets: List<Triple<String, String, String>>, bmp: android.graphics.Bitmap, done: (String) -> Unit) {
         if (i >= targets.size) { done("none"); return }
-        val (pkg, action, kind) = targets[i]
+        val (pkg, spec, kind) = targets[i]
         var finished = false
         val activity = this
         val conn = object : android.content.ServiceConnection {
@@ -145,7 +185,7 @@ helper = '''class MainActivity : FlutterActivity() {
                         when (kind) {
                             "reciept" -> reflectPrint(pkg, "recieptservice.com.recieptservice.PrinterInterface", binder, bmp)
                             "sunmi" -> sunmiPrint(binder, bmp)
-                            else -> nyxPrint(binder, bmp)
+                            else -> (try { reflectNyx(pkg, binder, bmp) } catch (e: Throwable) { false }) || nyxPrint(binder, bmp)
                         }
                     } catch (e: Throwable) { false }
                     activity.runOnUiThread {
@@ -156,9 +196,15 @@ helper = '''class MainActivity : FlutterActivity() {
             }
             override fun onServiceDisconnected(name: android.content.ComponentName?) {}
         }
-        val intent = if (action.startsWith("class:")) Intent().setClassName(pkg, action.substring(6))
-                     else Intent(action).setPackage(pkg)
-        if (action.startsWith("class:")) {
+        val intent = if (spec.startsWith("cls:")) {
+            val body = spec.substring(4)
+            val cls = body.substringBefore("#")
+            val action = if (body.contains("#")) body.substringAfter("#") else null
+            (if (action != null) Intent(action) else Intent()).setClassName(pkg, cls)
+        } else {
+            Intent(spec).setPackage(pkg)
+        }
+        if (kind == "reciept") {
             try { startService(intent) } catch (e: Exception) {}
         }
         val bound = try {
@@ -175,7 +221,22 @@ helper = '''class MainActivity : FlutterActivity() {
                 try { unbindService(conn) } catch (e: Exception) {}
                 tryPrinter(i + 1, targets, bmp, done)
             }
-        }, 3000)
+        }, 4000)
+    }
+
+    // Nyx engine through its own interface class (works for re-branded apps).
+    private fun reflectNyx(pkg: String, binder: android.os.IBinder, bmp: android.graphics.Bitmap): Boolean {
+        val pctx = createPackageContext(pkg, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
+        val stub = pctx.classLoader.loadClass("net.nyx.printerservice.print.IPrinterService" + '$' + "Stub")
+        val api = stub.getMethod("asInterface", android.os.IBinder::class.java).invoke(null, binder) ?: return false
+        val methods = api.javaClass.methods
+        val print = methods.firstOrNull { it.name == "printBitmap" && it.parameterTypes.size == 3 } ?: return false
+        for (part in slices(bmp)) {
+            val r = print.invoke(api, part, 0, 1)
+            if (r is Int && r != 0) return false
+        }
+        methods.firstOrNull { it.name == "paperOut" && it.parameterTypes.size == 1 }?.invoke(api, 80)
+        return true
     }
 
     private fun binderCall(b: android.os.IBinder, descriptor: String, index: Int, fill: (android.os.Parcel) -> Unit): android.os.Parcel? {
@@ -347,6 +408,8 @@ intents = ('        <intent><action android:name="android.intent.action.DIAL" />
            '        <package android:name="recieptservice.com.recieptservice" />\n'
            '        <package android:name="woyou.aidlservice.jiuiv5" />\n'
            '        <package android:name="net.nyx.printerservice" />\n'
+           '        <package android:name="com.incar.printerservice" />\n'
+           '        <intent><action android:name="net.nyx.printerservice.IPrinterService" /></intent>\n'
            '        <package android:name="com.iposprinter.iposprinterservice" />\n')
 if '<queries>' in c:
     c = c.replace('<queries>', '<queries>\n' + intents, 1)

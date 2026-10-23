@@ -13,7 +13,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
   Map<String, bool> _perm = const {};
-  bool _direct = true;
+  String _printer = 'auto';
+  String _printerLabel = 'Automatic';
   bool _testing = false;
 
   @override
@@ -21,9 +22,58 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _check();
-    Receipt.directEnabled().then((v) {
-      if (mounted) setState(() => _direct = v);
-    });
+    _loadPrinter();
+  }
+
+  Future<void> _loadPrinter() async {
+    final id = await Receipt.printerChoice();
+    var label = id == 'auto' ? 'Automatic' : id == 'dialog' ? 'Android print screen (preview)' : id;
+    if (id != 'auto' && id != 'dialog') {
+      final info = await Receipt.printerInfo();
+      for (final p in (info['printers'] as List?) ?? const []) {
+        if (p is Map && p['id'] == id) label = '${p['label']}';
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _printer = id;
+        _printerLabel = label;
+      });
+    }
+  }
+
+  /// Pick the printer: every printer this handheld can print to without a
+  /// preview, Automatic, or Android's print screen.
+  Future<void> _pickPrinter() async {
+    final info = await Receipt.printerInfo();
+    if (!mounted) return;
+    final printers = ((info['printers'] as List?) ?? const []).whereType<Map>().toList();
+    final options = <(String, String, String)>[
+      ('auto', 'Automatic', printers.isEmpty ? 'No direct printer found: uses the print screen' : 'First printer that prints without a preview'),
+      for (final p in printers) ('${p['id']}', '${p['label']}', 'Prints straight away · ${p['package']}'),
+      ('dialog', 'Android print screen', 'Shows a preview first, then you tap print'),
+    ];
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 8), child: Text('Printer', style: h(18))),
+          for (final o in options)
+            ListTile(
+              leading: Icon(_printer == o.$1 ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                  color: _printer == o.$1 ? C.green : C.muted),
+              title: Text(o.$2, style: h(15, w: FontWeight.w700)),
+              subtitle: Text(o.$3),
+              onTap: () => Navigator.pop(ctx, o.$1),
+            ),
+          const SizedBox(height: 10),
+        ]),
+      ),
+    );
+    if (picked == null) return;
+    await Receipt.setPrinterChoice(picked);
+    await _loadPrinter();
   }
 
   Future<void> _testPrint() async {
@@ -40,24 +90,18 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     toast(context, !ok
         ? 'Could not print.'
         : Receipt.lastMethod == 'dialog'
-            ? 'Printed with the Android print screen (no direct printer service found).'
-            : 'Printed directly (${Receipt.lastMethod}).');
+            ? 'Used the Android print screen. Pick your printer in Settings > Printer.'
+            : 'Printed directly, no preview.');
   }
 
   Future<void> _printerCheck() async {
     final i = await Receipt.printerInfo();
     if (!mounted) return;
-    final direct = i['reciept'] == true
-        ? 'Yes (PrinterService)'
-        : i['sunmi'] == true
-            ? 'Yes (Sunmi service)'
-            : i['nyx'] == true
-                ? 'Yes (Nyx service)'
-                : 'No';
+    final printers = ((i['printers'] as List?) ?? const []).whereType<Map>().toList();
     final lines = <String>[
       'Device: ${i['model'] ?? '?'} · Android ${i['android'] ?? '?'}',
-      'Direct printing: $direct',
-      if (i['ipos'] == true) 'iPos printer service found (send this screen to Claude to add it).',
+      'Direct printing: ${printers.isEmpty ? 'No' : 'Yes'}',
+      ...printers.map((p) => '• ${p['label']}'),
       '',
       'Printer apps:',
       ...((i['packages'] as List?) ?? const []).map((e) => '• $e'),
@@ -138,15 +182,12 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                   hint: 'Choose Soko Shop → Unrestricted / Don\'t optimise'),
             ]),
             _section('Printing', [
-              SwitchListTile(
-                activeColor: C.green,
-                title: const Text('Print straight away'),
-                subtitle: const Text('No print preview when the printer service allows it.'),
-                value: _direct,
-                onChanged: (v) async {
-                  await Receipt.setDirect(v);
-                  setState(() => _direct = v);
-                },
+              ListTile(
+                leading: const Icon(Icons.print_outlined, color: C.navy),
+                title: const Text('Printer'),
+                subtitle: Text(_printerLabel),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: _pickPrinter,
               ),
               ListTile(
                 leading: const Icon(Icons.print_rounded, color: C.green),

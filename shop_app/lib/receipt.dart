@@ -33,16 +33,19 @@ class Receipt {
     return _logo;
   }
 
-  /// Direct printing on (default) or always show Android's print preview.
-  static Future<bool> directEnabled() async {
+  /// Which printer to use: 'auto' (first one that prints without a preview),
+  /// 'dialog' (always Android's print screen) or a printer id from [printerInfo].
+  static Future<String> printerChoice() async {
     try {
-      return (await SharedPreferences.getInstance()).getBool('print_direct') ?? true;
+      final p = await SharedPreferences.getInstance();
+      return p.getString('printer_choice') ?? ((p.getBool('print_direct') ?? true) ? 'auto' : 'dialog');
     } catch (_) {
-      return true;
+      return 'auto';
     }
   }
 
-  static Future<void> setDirect(bool on) async => (await SharedPreferences.getInstance()).setBool('print_direct', on);
+  static Future<void> setPrinterChoice(String id) async =>
+      (await SharedPreferences.getInstance()).setString('printer_choice', id);
 
   // ---------------------------------------------------------------------------
   // Drawing
@@ -175,11 +178,11 @@ class Receipt {
   static Future<bool> print(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = ''}) async {
     try {
       final png = await image(s, shop: shop, phone: phone, email: email, header: header, footer: footer);
-      final direct = await directEnabled();
+      final choice = await printerChoice();
       final how = await _ch.invokeMethod<String>('printImage', <String, dynamic>{
         'png': png,
         'name': 'Receipt ${s.name}',
-        'direct': direct,
+        'printer': choice,
       });
       lastMethod = how ?? 'error';
       return lastMethod != 'error';
