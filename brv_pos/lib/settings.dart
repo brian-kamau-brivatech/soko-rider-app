@@ -36,7 +36,7 @@ class Settings extends ChangeNotifier {
   int paperMm = 58;
 
   // Advanced
-  bool taxableInclVat = false; // taxblAmt incl. VAT (KRA sample) vs excl. (Odoo/VSCU default)
+  bool taxableInclVat = true; // line prc/splyAmt/taxblAmt sent VAT inclusive (KRA convention)
   String cashier = '';
 
   bool get ready => initialised && vscuUrl.isNotEmpty && tin.isNotEmpty;
@@ -48,7 +48,7 @@ class Settings extends ChangeNotifier {
     _p = await SharedPreferences.getInstance();
     String s(String k, [String d = '']) => _p.getString(k) ?? d;
     vscuUrl = s('vscuUrl');
-    testMode = _p.getBool('testMode') ?? false;
+    testMode = false; // always live: KRA production
     tin = s('tin');
     bhfId = s('bhfId', '00');
     serial = s('serial');
@@ -69,7 +69,7 @@ class Settings extends ChangeNotifier {
     footer = s('footer', 'Thank you for shopping with us!');
     logoPath = s('logoPath');
     paperMm = _p.getInt('paperMm') ?? 58;
-    taxableInclVat = _p.getBool('taxableInclVat') ?? false;
+    taxableInclVat = _p.getBool('vatInclusiveJson') ?? true;
     cashier = s('cashier');
   }
 
@@ -100,7 +100,7 @@ class Settings extends ChangeNotifier {
     await _p.setString('footer', footer);
     await _p.setString('logoPath', logoPath);
     await _p.setInt('paperMm', paperMm);
-    await _p.setBool('taxableInclVat', taxableInclVat);
+    await _p.setBool('vatInclusiveJson', taxableInclVat);
     await _p.setString('cashier', cashier);
     notifyListeners();
   }

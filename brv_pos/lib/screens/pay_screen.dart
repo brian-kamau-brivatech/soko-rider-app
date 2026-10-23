@@ -4,6 +4,7 @@ import '../kra.dart';
 import '../receipt.dart';
 import '../sales.dart';
 import '../ui.dart';
+import 'customers_screen.dart';
 import 'sell_screen.dart';
 
 /// Take payment, sign the sale with the VSCU and print the receipt.
@@ -24,6 +25,28 @@ class _PayScreenState extends State<PayScreen> {
   bool _busy = false;
 
   double get _total => Cart.i.total;
+
+  static const _pmtIcons = {
+    '01': Icons.payments_rounded,
+    '02': Icons.request_quote_rounded,
+    '03': Icons.call_split_rounded,
+    '04': Icons.account_balance_rounded,
+    '05': Icons.credit_card_rounded,
+    '06': Icons.phone_iphone_rounded,
+    '07': Icons.more_horiz_rounded,
+  };
+
+  Future<void> _chooseCustomer() async {
+    final c = await Navigator.of(context)
+        .push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => const CustomersScreen(pick: true)));
+    if (c == null) return;
+    setState(() {
+      _showCustomer = true;
+      _custNm.text = '${c['name'] ?? ''}';
+      _custTin.text = '${c['tin'] ?? ''}';
+      _custMbl.text = '${c['phone'] ?? ''}';
+    });
+  }
   double get _given => double.tryParse(_tendered.text.trim().replaceAll(',', '')) ?? 0;
 
   @override
@@ -144,7 +167,7 @@ class _PayScreenState extends State<PayScreen> {
       ..sort();
     final change = _given - total;
     return Scaffold(
-      appBar: AppBar(title: Text('Payment', style: h(19))),
+      appBar: AppBar(title: Text('Payment')),
       body: AbsorbPointer(
         absorbing: _busy,
         child: ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 30), children: [
@@ -159,17 +182,48 @@ class _PayScreenState extends State<PayScreen> {
             ]),
           ),
           const SizedBox(height: 14),
-          Section('Paid by', [
+          Section('eTIMS payment type', [
             Padding(
-              padding: const EdgeInsets.all(12),
-              child: Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final p in Kra.paymentTypes)
-                  ChoiceChip(
-                    label: Text(p.name),
-                    selected: _pmt == p.code,
-                    onSelected: (_) => setState(() => _pmt = p.code),
-                  ),
-              ]),
+              padding: const EdgeInsets.all(10),
+              child: GridView.count(
+                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 2.6,
+                children: [
+                  for (final p in Kra.paymentTypes)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => _pmt = p.code),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: _pmt == p.code ? C.brand : Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _pmt == p.code ? C.brand : C.line, width: 1.5),
+                        ),
+                        child: Row(children: [
+                          Icon(_pmtIcons[p.code] ?? Icons.payments_rounded,
+                              color: _pmt == p.code ? C.gold : C.brand2, size: 22),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(p.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: h(13.5, w: FontWeight.w700, color: _pmt == p.code ? Colors.white : C.ink)),
+                              Text('Code ${p.code}',
+                                  style: TextStyle(fontSize: 11, color: _pmt == p.code ? Colors.white70 : C.muted)),
+                            ]),
+                          ),
+                        ]),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ]),
           if (_pmt == '01')
@@ -212,6 +266,14 @@ class _PayScreenState extends State<PayScreen> {
               onChanged: (v) => setState(() => _showCustomer = v),
             ),
             if (_showCustomer) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: OutlinedButton.icon(
+                  onPressed: _chooseCustomer,
+                  icon: const Icon(Icons.people_alt_outlined),
+                  label: const Text('Choose a saved customer'),
+                ),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
                 child: TextField(

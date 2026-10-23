@@ -9,7 +9,9 @@ class Db {
   static Future<Database> get() async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, 'brv_pos.db'), version: 1, onCreate: (db, v) async {
+    _db = await openDatabase(p.join(dir, 'brv_pos.db'), version: 2, onUpgrade: (db, oldV, newV) async {
+      if (oldV < 2) await _v2(db);
+    }, onCreate: (db, v) async {
       await db.execute('''CREATE TABLE items(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -60,8 +62,37 @@ class Db {
       await db.execute('''CREATE TABLE calls(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT, request TEXT, response TEXT, ok INTEGER, code TEXT, msg TEXT, ms INTEGER, created_at TEXT)''');
+      await _v2(db);
     });
     return _db!;
+  }
+
+  /// Version 2: users (login), customers and Z reports.
+  static Future<void> _v2(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS users(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,            -- admin | cashier
+      salt TEXT NOT NULL,
+      pass_hash TEXT NOT NULL,
+      active INTEGER DEFAULT 1,
+      first_login INTEGER DEFAULT 1,
+      created_at TEXT)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS customers(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      tin TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      created_at TEXT)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS z_reports(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      z_no INTEGER NOT NULL,
+      day TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      closed_by TEXT DEFAULT '',
+      data TEXT)''');
   }
 
   // --- key/value (counters that must change in the same transaction as a sale) ---

@@ -229,6 +229,98 @@ class Receipt {
     return _blackAndWhite(img);
   }
 
+  /// Any printout (reports) from simple lines, same look as receipts.
+  static Future<Uint8List> lines(List<PLine> lines, {bool logo = true}) async {
+    final s = Settings.i;
+    final w = width;
+    final k = w / 384;
+    final pad = 8.0 * k;
+    final inner = w - pad * 2;
+    final ops = <(double, void Function(Canvas, double))>[];
+    void add(PLine l) {
+      switch (l.kind) {
+        case 'gap':
+          ops.add((l.size * k, (c, y) {}));
+        case 'dash':
+          ops.add((14.0 * k, (c, y) {
+            final paint = Paint()
+              ..color = const Color(0xFF000000)
+              ..strokeWidth = 2 * k;
+            for (var x = pad; x < w - pad; x += 10 * k) {
+              c.drawLine(Offset(x, y + 7 * k), Offset(x + 5 * k, y + 7 * k), paint);
+            }
+          }));
+        case 'center':
+          {
+            final p = _tp(l.a, l.size * k, bold: l.bold, align: TextAlign.center, max: inner);
+            ops.add((p.height, (c, y) => p.paint(c, Offset(pad + (inner - p.width) / 2, y))));
+          }
+        case 'left':
+          {
+            final p = _tp(l.a, l.size * k, bold: l.bold, max: inner);
+            ops.add((p.height, (c, y) => p.paint(c, Offset(pad, y))));
+          }
+        default: // row
+          final r = _tp(l.b, l.size * k, bold: l.bold, max: inner);
+          final lp = _tp(l.a, l.size * k, bold: l.bold, max: inner - r.width - 10 * k);
+          final hh = lp.height > r.height ? lp.height : r.height;
+          ops.add((hh, (c, y) {
+            lp.paint(c, Offset(pad, y));
+            r.paint(c, Offset(w - pad - r.width, y));
+          }));
+      }
+    }
+
+    if (logo) {
+      final img = await _logo(inner * 0.6);
+      if (img != null) {
+        final lw = img.width.toDouble(), lh = img.height.toDouble();
+        ops.add((lh, (c, y) {
+          c.drawImageRect(img, Rect.fromLTWH(0, 0, lw, lh), Rect.fromLTWH((w - lw) / 2, y, lw, lh),
+              Paint()..filterQuality = FilterQuality.high);
+        }));
+        ops.add((6 * k, (c, y) {}));
+      }
+    }
+    for (final l in [
+      PLine.center(s.shopName, size: 24, bold: true),
+      PLine.center('PIN: ${s.tin}', size: 19, bold: true),
+      if (s.address.isNotEmpty) PLine.center(s.address, size: 18),
+      const PLine.gap(4),
+      ...lines,
+      const PLine.gap(4),
+      const PLine.center('Powered by BRV POS', size: 15),
+      const PLine.gap(70),
+    ]) {
+      add(l);
+    }
+    final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec, Rect.fromLTWH(0, 0, w, total));
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, total), Paint()..color = const Color(0xFFFFFFFF));
+    var y = 0.0;
+    for (final o in ops) {
+      o.$2(canvas, y);
+      y += o.$1;
+    }
+    final img = await rec.endRecording().toImage(w.toInt(), total.toInt());
+    return _blackAndWhite(img);
+  }
+
+  /// Save any printout image as a PDF in Downloads/BRV POS.
+  static Future<String?> pngPdf(Uint8List png, String name, {bool share = false}) async {
+    try {
+      return await _ch.invokeMethod<String>('savePdf', <String, dynamic>{
+        'png': png,
+        'name': name,
+        'widthMm': Settings.i.paperMm >= 80 ? 80 : 58,
+        'share': share,
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Thermal printers print black or nothing: every dot black or white.
   static Future<Uint8List> _blackAndWhite(ui.Image img) async {
     final raw = (await img.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
@@ -301,4 +393,31 @@ class Receipt {
       return {'error': '$e'};
     }
   }
+}
+
+/// One line of a printout.
+class PLine {
+  final String kind; // center | left | row | dash | gap
+  final String a;
+  final String b;
+  final double size;
+  final bool bold;
+  const PLine.center(this.a, {this.size = 19, this.bold = false})
+      : kind = 'center',
+        b = '';
+  const PLine.left(this.a, {this.size = 19, this.bold = false})
+      : kind = 'left',
+        b = '';
+  const PLine.row(this.a, this.b, {this.size = 19, this.bold = false}) : kind = 'row';
+  const PLine.dash()
+      : kind = 'dash',
+        a = '',
+        b = '',
+        size = 0,
+        bold = false;
+  const PLine.gap(this.size)
+      : kind = 'gap',
+        a = '',
+        b = '',
+        bold = false;
 }

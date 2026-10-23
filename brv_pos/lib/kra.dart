@@ -171,18 +171,18 @@ class SaleLineCalc {
     taxAmt = r2(total - taxable);
   }
 
-  /// itemList entry. [taxableInclVat]: send taxblAmt including VAT (KRA spec sample)
+  /// itemList entry. [taxableInclVat]: send prc/splyAmt VAT inclusive (taxblAmt is always without VAT)
   /// instead of excluding it (Odoo / VSCU default).
   Map<String, dynamic> toJson(int seq, {bool taxableInclVat = false}) {
     final rate = Kra.rate(tax);
     final Map<String, dynamic> m;
     if (taxableInclVat) {
       m = {
-        'prc': r2(priceIncl),
-        'splyAmt': gross,
+        'prc': r2(priceIncl), // unit price VAT inclusive
+        'splyAmt': gross, // qty x price, VAT inclusive
         'dcRt': r2(discountRate),
         'dcAmt': discountIncl,
-        'taxblAmt': total,
+        'taxblAmt': taxable, // taxable amount = without VAT
         'taxAmt': taxAmt,
         'totAmt': total,
       };

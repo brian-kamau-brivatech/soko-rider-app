@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'db.dart';
 import 'kra.dart';
+import 'session.dart';
 import 'settings.dart';
 import 'vscu.dart';
 
@@ -121,7 +122,8 @@ class Sales {
         custTin: custTin.trim().toUpperCase(),
         custNm: custNm.trim(),
         custMblNo: custMbl.trim(),
-        userName: s.cashier.isEmpty ? 'BRV POS' : s.cashier,
+        userId: '${Session.i.userId}',
+        userName: Session.i.name.isEmpty ? 'BRV POS' : Session.i.name,
         taxableInclVat: s.taxableInclVat,
       );
       saleId = await tx.insert('sales', {
@@ -142,7 +144,7 @@ class Sales {
         'tot_tax': payload['totTaxAmt'],
         'tot_amt': payload['totAmt'],
         'item_cnt': lines.length,
-        'cashier': s.cashier,
+        'cashier': Session.i.name,
         'payload': jsonEncode(payload),
       });
       for (final l in lines) {

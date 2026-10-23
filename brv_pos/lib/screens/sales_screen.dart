@@ -114,7 +114,7 @@ class _SalesScreenState extends State<SalesScreen> {
     final today = _ymd(_day) == _ymd(DateTime.now());
 
     return Scaffold(
-      appBar: AppBar(title: Text('Sales', style: h(19))),
+      appBar: AppBar(title: const Text('Receipts / Invoices')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.fromLTRB(14, 6, 14, 30), children: [

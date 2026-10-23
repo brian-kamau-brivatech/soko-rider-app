@@ -4,6 +4,7 @@ import '../db.dart';
 import '../kra.dart';
 import '../receipt.dart';
 import '../sales.dart';
+import '../session.dart';
 import '../ui.dart';
 
 /// One sale: receipt preview, COPY reprint, PDF, retry and credit note.
@@ -186,7 +187,7 @@ class _SaleScreenState extends State<SaleScreen> {
   Widget build(BuildContext context) {
     final s = _sale;
     return Scaffold(
-      appBar: AppBar(title: Text(s?.number ?? 'Sale', style: h(18))),
+      appBar: AppBar(title: Text(s?.number ?? 'Sale')),
       body: s == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 30), children: [
@@ -249,7 +250,7 @@ class _SaleScreenState extends State<SaleScreen> {
                     icon: const Icon(Icons.share_rounded),
                   ),
                 ]),
-                if (!s.isCredit) ...[
+                if (!s.isCredit && Session.i.admin) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: _busy || _credited ? null : _creditNote,

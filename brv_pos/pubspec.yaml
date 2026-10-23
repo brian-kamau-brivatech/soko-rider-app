@@ -16,6 +16,10 @@ dependencies:
   path_provider: ^2.1.3
   image_picker: ^1.1.2
   qr: ^3.0.2
+  crypto: ^3.0.3
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brv_logo.png
+    - assets/brv_mark.png

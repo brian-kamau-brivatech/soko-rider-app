@@ -4,7 +4,7 @@ import '../kra.dart';
 import '../sales.dart';
 import '../settings.dart';
 import '../ui.dart';
-import 'home.dart';
+import 'sales_screen.dart';
 import 'items_screen.dart';
 import 'pay_screen.dart';
 
@@ -12,9 +12,8 @@ class CartLine {
   final Map<String, dynamic> item;
   double qty;
   double discount; // %
-  CartLine(this.item, {this.qty = 1, this.discount = 0});
-
-  double get price => (item['price'] as num).toDouble();
+  double price; // unit price incl. VAT, entered at sale
+  CartLine(this.item, {required this.price, this.qty = 1, this.discount = 0});
   SaleLineCalc calc() => SaleLineCalc(
         itemId: item['id'] as int,
         itemCd: '${item['item_cd']}',
@@ -35,15 +34,15 @@ class Cart extends ChangeNotifier {
   static final Cart i = Cart();
   final List<CartLine> lines = [];
 
-  void add(Map<String, dynamic> item) {
+  void add(Map<String, dynamic> item, {required double price, double qty = 1}) {
     for (final l in lines) {
-      if (l.item['id'] == item['id'] && l.discount == 0) {
-        l.qty = r2(l.qty + 1);
+      if (l.item['id'] == item['id'] && l.discount == 0 && l.price == price) {
+        l.qty = r2(l.qty + qty);
         notifyListeners();
         return;
       }
     }
-    lines.add(CartLine(item));
+    lines.add(CartLine(item, price: price, qty: r2(qty)));
     notifyListeners();
   }
 
@@ -83,7 +82,6 @@ class _SellScreenState extends State<SellScreen> {
     itemsVersion.addListener(_load);
     salesVersion.addListener(_checkPending);
     Cart.i.addListener(_rebuild);
-    homeTab.addListener(_onTab);
   }
 
   @override
@@ -91,7 +89,6 @@ class _SellScreenState extends State<SellScreen> {
     itemsVersion.removeListener(_load);
     salesVersion.removeListener(_checkPending);
     Cart.i.removeListener(_rebuild);
-    homeTab.removeListener(_onTab);
     _search.dispose();
     super.dispose();
   }
@@ -100,9 +97,6 @@ class _SellScreenState extends State<SellScreen> {
     if (mounted) setState(() {});
   }
 
-  void _onTab() {
-    if (homeTab.value == 0) _checkPending();
-  }
 
   Future<void> _load() async {
     final db = await Db.get();
@@ -122,14 +116,86 @@ class _SellScreenState extends State<SellScreen> {
     if (code.isEmpty) return;
     final hit = _items.where((e) => '${e['barcode']}' == code || '${e['item_cd']}' == code).toList();
     if (hit.length == 1) {
-      Cart.i.add(hit.first);
       _search.clear();
       setState(() => _q = '');
+      _addItem(hit.first);
     }
+  }
+
+  /// Prices are not fixed: ask the VAT-inclusive price (and quantity) for each item.
+  Future<void> _addItem(Map<String, dynamic> it) async {
+    final dflt = (it['price'] as num?)?.toDouble() ?? 0;
+    final price = TextEditingController(text: dflt > 0 ? dflt.toStringAsFixed(2) : '');
+    final qty = TextEditingController(text: '1');
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${it['name']}', style: h(19)),
+          Text('Tax group ${it['tax']} · ${Kra.find(Kra.taxTypes, '${it['tax']}')?.name ?? ''}',
+              style: const TextStyle(color: C.muted)),
+          const SizedBox(height: 14),
+          TextField(
+            controller: price,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: h(22),
+            decoration: field('Unit price (VAT inclusive)', hint: '0.00'),
+            onSubmitted: (_) => Navigator.pop(ctx, true),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            IconButton.filledTonal(
+              onPressed: () {
+                final v = (double.tryParse(qty.text) ?? 1) - 1;
+                if (v > 0) qty.text = qtyText(v);
+              },
+              icon: const Icon(Icons.remove_rounded),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: qty,
+                textAlign: TextAlign.center,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: field('Quantity'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              onPressed: () => qty.text = qtyText((double.tryParse(qty.text) ?? 0) + 1),
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ]),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.add_shopping_cart_rounded),
+              label: const Text('Add to sale'),
+            ),
+          ),
+        ]),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final p = double.tryParse(price.text.trim().replaceAll(',', ''));
+    final q = double.tryParse(qty.text.trim().replaceAll(',', '')) ?? 1;
+    if (p == null || p <= 0) {
+      toast(context, 'Enter the price for ${it['name']}.');
+      return;
+    }
+    if (q <= 0) return;
+    Cart.i.add(it, price: r2(p), qty: q);
   }
 
   Future<void> _editLine(CartLine l) async {
     final qty = TextEditingController(text: qtyText(l.qty));
+    final pr = TextEditingController(text: l.price.toStringAsFixed(2));
     final dc = TextEditingController(text: l.discount == 0 ? '' : l.discount.toStringAsFixed(l.discount % 1 == 0 ? 0 : 2));
     final res = await showModalBottomSheet<String>(
       context: context,
@@ -166,6 +232,12 @@ class _SellScreenState extends State<SellScreen> {
           ]),
           const SizedBox(height: 12),
           TextField(
+            controller: pr,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: field('Unit price (VAT inclusive)'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
             controller: dc,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: field('Discount %', hint: '0'),
@@ -194,6 +266,8 @@ class _SellScreenState extends State<SellScreen> {
         Cart.i.remove(l);
       } else {
         l.qty = r2(q);
+        final np = double.tryParse(pr.text.trim().replaceAll(',', ''));
+        if (np != null && np > 0) l.price = r2(np);
         l.discount = d.clamp(0, 100).toDouble();
         Cart.i.changed();
       }
@@ -241,8 +315,8 @@ class _SellScreenState extends State<SellScreen> {
           child: ListTile(
             leading: const Icon(Icons.hourglass_top_rounded, color: C.amber),
             title: Text('Sale ${_pending!.number} is waiting for the VSCU', style: h(14, color: C.amber)),
-            subtitle: const Text('Open Sales and tap Retry before the next sale.'),
-            onTap: () => homeTab.value = 1,
+            subtitle: const Text('Tap here and Retry it before the next sale.'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SalesScreen())),
           ),
         ),
       Padding(
@@ -268,7 +342,7 @@ class _SellScreenState extends State<SellScreen> {
             ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 const EmptyNote(Icons.inventory_2_outlined, 'No items yet.'),
                 FilledButton.icon(
-                  onPressed: () => homeTab.value = 2,
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ItemsScreen())),
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('Add items'),
                 ),
@@ -285,7 +359,7 @@ class _SellScreenState extends State<SellScreen> {
                       final inCart = cart.lines.where((l) => l.item['id'] == it['id']).fold<double>(0, (a, l) => a + l.qty);
                       return InkWell(
                         borderRadius: BorderRadius.circular(14),
-                        onTap: () => cart.add(it),
+                        onTap: () => _addItem(it),
                         child: Container(
                           padding: const EdgeInsets.all(10),
                           decoration: card(14).copyWith(
@@ -298,7 +372,7 @@ class _SellScreenState extends State<SellScreen> {
                                   maxLines: 2, overflow: TextOverflow.ellipsis, style: h(14, w: FontWeight.w700)),
                             ),
                             Row(children: [
-                              Expanded(child: Text(money((it['price'] as num).toDouble(), symbol: false), style: h(15, color: C.brand))),
+                              Expanded(child: Text(((it['price'] as num?) ?? 0) > 0 ? money((it['price'] as num).toDouble(), symbol: false) : 'Enter price', style: h(15, color: C.brand))),
                               if (inCart > 0)
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -372,7 +446,7 @@ class _SellScreenState extends State<SellScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(s.shopName, style: h(18), overflow: TextOverflow.ellipsis),
+        title: const Text('New sale'),
         actions: [
           if (cart.lines.isNotEmpty)
             Padding(

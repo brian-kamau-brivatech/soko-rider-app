@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 import 'db.dart';
 import 'kra.dart';
+import 'session.dart';
 import 'settings.dart';
 
 class VscuResult {
@@ -69,10 +70,22 @@ class Vscu {
 
   /// initializer/selectInitInfo: activates this PIN + branch + device serial and
   /// returns the taxpayer details and KRA's last invoice numbers.
+  /// Code 902 ("This device is installed") means the device was already
+  /// initialised before: that is fine, the device is set up and can sell.
+  static bool alreadyInstalled(VscuResult r) =>
+      r.code == '902' || RegExp(r'device is installed|already', caseSensitive: false).hasMatch(r.msg);
+
   static Future<VscuResult> initialise() async {
     final s = Settings.i;
     final res = await call('initializer/selectInitInfo', {'dvcSrlNo': s.serial});
-    if (!res.ok) return res;
+    if (!res.ok && !alreadyInstalled(res)) return res;
+    if (!res.ok) {
+      s.initialised = true;
+      if (s.initAt.isEmpty) s.initAt = DateTime.now().toIso8601String();
+      if (s.businessName.isEmpty) s.businessName = s.taxpayerName;
+      await s.save();
+      return res;
+    }
     final info = res.data['info'] is Map ? Map<String, dynamic>.from(res.data['info']) : <String, dynamic>{};
     String v(String k) => info[k] == null ? '' : '${info[k]}';
     s.initialised = true;
@@ -96,7 +109,7 @@ class Vscu {
   /// items/saveItems: register (or update) an item with KRA.
   static Future<VscuResult> saveItem(Map<String, dynamic> item) async {
     final s = Settings.i;
-    final user = s.cashier.isEmpty ? 'BRV POS' : s.cashier;
+    final user = Session.i.name.isEmpty ? 'BRV POS' : Session.i.name;
     final res = await call('items/saveItems', {
       'itemCd': item['item_cd'],
       'itemClsCd': item['cls_cd'],
@@ -124,6 +137,7 @@ class Vscu {
   /// itemClass/selectItemsClass: KRA item classifications, saved for the item picker.
   static Future<VscuResult> refreshItemClasses() async {
     final res = await call('itemClass/selectItemsClass', {'lastReqDt': '20180101000000'});
+    if (res.code == '001') return VscuResult(ok: true, code: '001', msg: 'No classifications returned');
     if (!res.ok) return res;
     final list = res.data['itemClsList'] is List ? res.data['itemClsList'] as List : const [];
     final db = await Db.get();
@@ -141,5 +155,14 @@ class Vscu {
       await batch.commit(noResult: true);
     });
     return res;
+  }
+
+  /// items/selectItems: items already registered at KRA for this PIN and branch
+  /// (for example by Odoo). Returns the list, or throws the VSCU message.
+  static Future<(VscuResult, List<Map<String, dynamic>>)> registeredItems() async {
+    final res = await call('items/selectItems', {'lastReqDt': '20180101000000'});
+    if (res.code == '001') return (VscuResult(ok: true, code: '001'), <Map<String, dynamic>>[]);
+    final list = res.data['itemList'] is List ? res.data['itemList'] as List : const [];
+    return (res, [for (final e in list) if (e is Map) Map<String, dynamic>.from(e)]);
   }
 }

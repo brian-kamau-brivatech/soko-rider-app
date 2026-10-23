@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
 class C {
-  static const brand = Color(0xFF123B6D);
-  static const brand2 = Color(0xFF1C5A9E);
-  static const brandLight = Color(0xFFE6EEF8);
+  // BRV Integrated Systems: navy and gold
+  static const brand = Color(0xFF0A2348);
+  static const brand2 = Color(0xFF1B3F73);
+  static const brandLight = Color(0xFFE7ECF4);
+  static const gold = Color(0xFFC38B2C);
+  static const goldDark = Color(0xFF9E6E1C);
+  static const goldLight = Color(0xFFF8EEDB);
   static const green = Color(0xFF0E8A55);
   static const greenLight = Color(0xFFE3F5EC);
-  static const bg = Color(0xFFF3F5F8);
+  static const bg = Color(0xFFF4F6FA);
   static const ink = Color(0xFF111827);
   static const muted = Color(0xFF5B6576);
   static const line = Color(0xFFE2E7EE);

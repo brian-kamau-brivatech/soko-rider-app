@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import '../db.dart';
 import '../receipt.dart';
 import '../sales.dart';
+import '../session.dart';
 import '../settings.dart';
 import '../ui.dart';
 import '../vscu.dart';
@@ -30,7 +31,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final _email = TextEditingController(text: s.email);
   late final _header = TextEditingController(text: s.header);
   late final _footer = TextEditingController(text: s.footer);
-  late final _cashier = TextEditingController(text: s.cashier);
 
   bool _busy = false;
   String _conn = '';
@@ -48,7 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
-    for (final c in [_url, _tin, _bhf, _serial, _name, _address, _phone, _email, _header, _footer, _cashier]) {
+    for (final c in [_url, _tin, _bhf, _serial, _name, _address, _phone, _email, _header, _footer]) {
       c.dispose();
     }
     super.dispose();
@@ -93,12 +93,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     s.email = _email.text.trim();
     s.header = _header.text.trim();
     s.footer = _footer.text.trim();
-    s.cashier = _cashier.text.trim();
   }
 
   Future<void> _save() async {
     _collect();
     await s.save();
+    if (!s.initialised) {
+      // First save: connect the device to the VSCU so selling can start.
+      await _initialise();
+      return;
+    }
     if (mounted) toast(context, 'Saved.');
   }
 
@@ -138,11 +142,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final again = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Initialise again?'),
-          content: const Text('This repeats the KRA initialisation for this device. Your sales on this phone are kept.'),
+          title: const Text('Check the device again?'),
+          content: const Text('This asks the VSCU for the device details again. Your sales on this phone are kept.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Initialise')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Check')),
           ],
         ),
       );
@@ -153,6 +157,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final res = await Vscu.initialise();
     if (!mounted) return;
     setState(() => _busy = false);
+    if (!res.ok && Vscu.alreadyInstalled(res)) {
+      // 902: the device was initialised before. It is set up: save and carry on.
+      await _refreshNumbers();
+      if (!mounted) return;
+      toast(context, 'Device already initialised at KRA. Settings saved. Next invoice number: $_nextNo.');
+      if (_classes == 0) Vscu.refreshItemClasses().then((_) => _refreshNumbers());
+      return;
+    }
     if (res.ok) {
       _name.text = s.businessName;
       _address.text = s.address;
@@ -179,15 +191,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final msg = res.code == '901'
           ? 'KRA did not accept this device. Check the PIN, branch and device serial match the eTIMS portal exactly.'
           : res.message;
-      await showDialog<void>(
+      final anyway = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.error_outline_rounded, color: C.red, size: 40),
-          title: const Text('Initialisation failed'),
-          content: Text(msg),
-          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+          title: const Text('Could not confirm the device'),
+          content: Text('$msg\n\nIf this device is already set up on your VSCU you can save anyway; '
+              'every sale is still checked and signed by the VSCU.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save anyway')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Fix details')),
+          ],
         ),
       );
+      if (anyway == true) {
+        s.initialised = true;
+        await s.save();
+      }
     }
   }
 
@@ -283,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final sample = Sale({
       'id': 0, 'invc_no': 0, 'trd_invc_no': 'TEST-PRINT', 'kind': 'S', 'status': 'signed',
       'created_at': now.toIso8601String(), 'pmt_ty_cd': '01', 'tot_amt': 116.0, 'tot_tax': 16.0,
-      'cashier': s.cashier, 'payload': '{"taxblAmtB":100.0,"taxAmtB":16.0}',
+      'cashier': Session.i.name, 'payload': '{"taxblAmtB":100.0,"taxAmtB":16.0}',
       'sdc_id': s.controlUnitId.isEmpty ? 'KRACU0000000000' : s.controlUnitId, 'rcpt_no': 0, 'tot_rcpt_no': 0,
       'intrl_data': 'TESTPRINTNOTVALIDFORKRA000', 'rcpt_sign': 'TESTPRINTONLY000',
     }, [
@@ -325,7 +345,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final logo = s.logoPath.isNotEmpty && File(s.logoPath).existsSync() ? File(s.logoPath) : null;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.firstRun ? 'Set up BRV POS' : 'Settings', style: h(19))),
+      appBar: AppBar(title: Text(widget.firstRun ? 'Set up BRV POS' : 'Settings'), actions: [
+        if (widget.firstRun)
+          IconButton(tooltip: 'Sign out', onPressed: Session.i.signOut, icon: const Icon(Icons.logout_rounded)),
+      ]),
       body: AbsorbPointer(
         absorbing: _busy,
         child: ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 40), children: [
@@ -336,7 +359,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: BoxDecoration(color: C.brand, borderRadius: BorderRadius.circular(16)),
               child: const Text(
                 'Enter your VSCU address and the device details registered on the KRA eTIMS portal, '
-                'then tap Initialise. After that you can add items and start selling.',
+                'then tap Connect device (or Save). After that you can add items and start selling.',
                 style: TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
               ),
             ),
@@ -345,12 +368,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Section('VSCU connection', [
             _tf(_url, 'VSCU address', hint: 'http://178.128.254.30:8088', type: TextInputType.url,
                 help: 'Where your VSCU listens: http:// + server IP + : + port. No path.'),
-            SwitchListTile(
-              title: const Text('Test mode (KRA sandbox)'),
-              subtitle: const Text('Off for live invoicing. Also sets the QR link on receipts.'),
-              value: s.testMode,
-              onChanged: (v) => setState(() => s.testMode = v),
-            ),
             ListTile(
               leading: Icon(_connOk == null ? Icons.wifi_find_rounded : (_connOk! ? Icons.check_circle_rounded : Icons.error_rounded),
                   color: _connOk == null ? C.muted : (_connOk! ? C.green : C.red)),
@@ -374,7 +391,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Row(children: [
                     const Icon(Icons.verified_rounded, color: C.green, size: 20),
                     const SizedBox(width: 6),
-                    Expanded(child: Text('Initialised · ${s.taxpayerName}', style: h(14.5, color: C.green))),
+                    Expanded(child: Text('Device set up · live${s.taxpayerName.isEmpty ? '' : ' · ${s.taxpayerName}'}', style: h(14.5, color: C.green))),
                   ]),
                   const SizedBox(height: 4),
                   Text([
@@ -391,7 +408,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: FilledButton.icon(
                   onPressed: _busy ? null : _initialise,
                   icon: const Icon(Icons.power_settings_new_rounded),
-                  label: Text(s.initialised ? 'Initialise again' : 'Initialise'),
+                  label: Text(s.initialised ? 'Check device again' : 'Connect device'),
                   style: FilledButton.styleFrom(backgroundColor: s.initialised ? C.brand2 : C.green),
                 ),
               ),
@@ -486,11 +503,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
 
           Section('More', [
-            _tf(_cashier, 'Cashier name on receipts (optional)'),
             SwitchListTile(
-              title: const Text('Send taxable amounts including VAT'),
-              subtitle: const Text('Leave off: your VSCU and Odoo send taxable amounts without VAT. '
-                  'Turn on only if KRA asks for amounts including VAT.'),
+              title: const Text('Send line prices VAT inclusive to eTIMS'),
+              subtitle: const Text('On (recommended): unit price and line amount include VAT. '
+                  'The taxable amount is always without VAT. Off: prices also sent without VAT.'),
               value: s.taxableInclVat,
               onChanged: (v) => setState(() => s.taxableInclVat = v),
             ),
@@ -505,7 +521,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           SizedBox(
             height: 52,
-            child: FilledButton(onPressed: _busy ? null : _save, child: const Text('Save settings')),
+            child: FilledButton(onPressed: _busy ? null : _save, child: Text(s.initialised ? 'Save settings' : 'Save & connect')),
           ),
         ]),
       ),

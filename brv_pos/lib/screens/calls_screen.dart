@@ -45,7 +45,7 @@ class _CallsScreenState extends State<CallsScreen> {
         '\n\nRESPONSE\n${_pretty(r['response'] as String?)}';
     Navigator.of(context).push(MaterialPageRoute(
       builder: (ctx) => Scaffold(
-        appBar: AppBar(title: Text('/${r['path']}', style: h(16)), actions: [
+        appBar: AppBar(title: Text('/${r['path']}'), actions: [
           IconButton(
             tooltip: 'Copy',
             icon: const Icon(Icons.copy_rounded),
@@ -66,7 +66,7 @@ class _CallsScreenState extends State<CallsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('VSCU call log', style: h(18))),
+      appBar: AppBar(title: Text('VSCU call log')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _rows.isEmpty

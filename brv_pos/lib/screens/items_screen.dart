@@ -74,6 +74,48 @@ class _ItemsScreenState extends State<ItemsScreen> {
     toast(context, last == null ? 'Registered $ok item(s) with KRA.' : 'Registered $ok of ${todo.length}. Last error: $last');
   }
 
+  /// Bring in items already registered at KRA for this branch (e.g. from Odoo).
+  Future<void> _importKra() async {
+    setState(() => _busy = true);
+    final (res, list) = await Vscu.registeredItems();
+    if (!mounted) return;
+    if (!res.ok) {
+      setState(() => _busy = false);
+      toast(context, 'Could not load KRA items: ${res.message}');
+      return;
+    }
+    final db = await Db.get();
+    var added = 0;
+    for (final e in list) {
+      String v(String k) => e[k] == null || '${e[k]}' == 'null' ? '' : '${e[k]}';
+      if (v('itemCd').isEmpty || v('useYn') == 'N') continue;
+      final have = await db.query('items', columns: ['id'], where: 'item_cd = ?', whereArgs: [v('itemCd')], limit: 1);
+      if (have.isNotEmpty) continue;
+      await db.insert('items', {
+        'name': v('itemNm').isEmpty ? v('itemCd') : v('itemNm'),
+        'price': r2(double.tryParse(v('dftPrc')) ?? 0),
+        'tax': Kra.find(Kra.taxTypes, v('taxTyCd')) == null ? 'B' : v('taxTyCd'),
+        'cls_cd': v('itemClsCd'),
+        'item_type': v('itemTyCd').isEmpty ? '2' : v('itemTyCd'),
+        'origin': v('orgnNatCd').isEmpty ? 'KE' : v('orgnNatCd'),
+        'pkg_unit': v('pkgUnitCd').isEmpty ? 'NT' : v('pkgUnitCd'),
+        'qty_unit': v('qtyUnitCd').isEmpty ? 'U' : v('qtyUnitCd'),
+        'barcode': v('bcd'),
+        'item_cd': v('itemCd'),
+        'registered': 1,
+        'active': 1,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      added++;
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    itemsVersion.value++;
+    toast(context, list.isEmpty
+        ? 'No items are registered at KRA for this branch yet.'
+        : 'Imported $added new item(s) of ${list.length} registered at KRA. Check their prices.');
+  }
+
   @override
   Widget build(BuildContext context) {
     final q = _q.toLowerCase();
@@ -82,12 +124,22 @@ class _ItemsScreenState extends State<ItemsScreen> {
         : _items.where((e) => '${e['name']} ${e['barcode']} ${e['item_cd']}'.toLowerCase().contains(q)).toList();
     final unregistered = _items.where((e) => e['registered'] != 1 && e['active'] == 1).length;
     return Scaffold(
-      appBar: AppBar(title: Text('Items', style: h(19)), actions: [
+      appBar: AppBar(title: Text('Items'), actions: [
         if (unregistered > 0 && Settings.i.ready)
           TextButton.icon(
             onPressed: _busy ? null : _registerAll,
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
             icon: const Icon(Icons.cloud_upload_outlined),
             label: Text('Register $unregistered'),
+          ),
+        if (Settings.i.ready)
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'import') _importKra();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'import', child: Text('Import items registered at KRA')),
+            ],
           ),
       ]),
       floatingActionButton: FloatingActionButton.extended(
@@ -140,7 +192,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                                   ]),
                                 ]),
                               ),
-                              Text(money((it['price'] as num).toDouble()), style: h(15.5)),
+                              Text(((it['price'] as num?) ?? 0) > 0 ? money((it['price'] as num).toDouble()) : 'Price at sale', style: h(14.5, color: C.muted)),
                             ]),
                           ),
                         );
