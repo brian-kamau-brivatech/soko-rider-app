@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../backup.dart';
 import '../db.dart';
 import '../kra.dart';
 import '../receipt.dart';
@@ -22,6 +23,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   ReportData? _data;
   Map<String, dynamic>? _z;
   bool _busy = false;
+  String _error = '';
 
   @override
   void initState() {
@@ -43,14 +45,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<void> _load() async {
-    final (from, to) = _period;
-    final d = await Reports.build(from, to);
-    final z = _mode == 'day' ? await Reports.z(from) : null;
-    if (mounted) {
-      setState(() {
-        _data = d;
-        _z = z;
-      });
+    try {
+      final (from, to) = _period;
+      final d = await Reports.build(from, to);
+      final z = _mode == 'day' ? await Reports.z(from) : null;
+      if (mounted) {
+        setState(() {
+          _data = d;
+          _z = z;
+          _error = '';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
     }
   }
 
@@ -154,6 +161,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     if (ok != true) return;
     setState(() => _busy = true);
     _z = await Reports.closeDay(day);
+    Backup.auto();
     final png = await Receipt.lines(await _printLines(zCopy: false));
     await Receipt.printPng(png, 'Z report');
     if (!mounted) return;
@@ -202,7 +210,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
         ]),
         if (_busy) const LinearProgressIndicator(color: C.brand),
-        if (d == null)
+        if (_error.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: C.redLight, borderRadius: BorderRadius.circular(14)),
+            child: SelectableText('Could not build the report: $_error', style: const TextStyle(color: C.red)),
+          )
+        else if (d == null)
           const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()))
         else ...[
           if (_mode == 'day')

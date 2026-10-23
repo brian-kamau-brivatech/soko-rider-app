@@ -12,6 +12,7 @@ Future<void> main() async {
   await Settings.i.load();
   await Db.get();
   await Session.ensureAdmin();
+  await Session.i.restore();
   runApp(const BrvPosApp());
 }
 

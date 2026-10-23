@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../backup.dart';
 import '../db.dart';
 import '../receipt.dart';
 import '../sales.dart';
@@ -502,6 +503,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
 
+          Section('Backup & restore', [
+            FutureBuilder<DateTime?>(
+              future: Backup.lastBackup(),
+              builder: (_, snap) {
+                final t = snap.data;
+                String two(int v) => v.toString().padLeft(2, '0');
+                return ListTile(
+                  leading: const Icon(Icons.verified_user_rounded, color: C.green),
+                  title: const Text('Automatic backup'),
+                  subtitle: Text('${t == null ? 'Not made yet' : 'Last: ${two(t.day)}/${two(t.month)} ${two(t.hour)}:${two(t.minute)}'}'
+                      ' · after every sale, in Downloads/BRV POS/Backups (kept even if the app is uninstalled)'),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.backup_rounded, color: C.brand),
+              title: const Text('Back up now and share'),
+              subtitle: const Text('Saves a copy and lets you send it to WhatsApp, email or Drive'),
+              onTap: () async {
+                setState(() => _busy = true);
+                String? uri;
+                try {
+                  uri = await Backup.saveNow(share: true);
+                } catch (_) {}
+                if (!mounted) return;
+                setState(() => _busy = false);
+                toast(context, uri == null ? 'Could not save the backup.' : 'Backup saved in Downloads/BRV POS/Backups.');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_backup_restore_rounded, color: C.amber),
+              title: const Text('Restore from a backup'),
+              subtitle: const Text('Replaces everything on this phone with the backup file you pick'),
+              onTap: () => restoreFlow(context),
+            ),
+          ]),
+
           Section('More', [
             SwitchListTile(
               title: const Text('Send line prices VAT inclusive to eTIMS'),
@@ -527,4 +565,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+}
+
+/// Pick a backup file, confirm, restore, then sign in again.
+Future<void> restoreFlow(BuildContext context) async {
+  Map<String, dynamic>? b;
+  try {
+    b = await Backup.pick();
+  } catch (e) {
+    if (context.mounted) toast(context, e is FormatException ? e.message : 'Could not read the file.');
+    return;
+  }
+  if (b == null || !context.mounted) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: const Icon(Icons.settings_backup_restore_rounded, color: C.amber, size: 40),
+      title: const Text('Restore this backup?'),
+      content: Text('${Backup.summary(b!)}\n\nEverything now on this phone is replaced. '
+          'Afterwards, sign in with the usernames and passwords from the backup.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Restore')),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  try {
+    await Backup.restore(b);
+  } catch (e) {
+    if (context.mounted) toast(context, 'Restore failed: $e');
+    return;
+  }
+  if (context.mounted) {
+    toast(context, 'Restored. Sign in with your usual username and password.');
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+  Session.i.signOut();
 }

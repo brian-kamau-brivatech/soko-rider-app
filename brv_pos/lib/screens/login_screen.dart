@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../backup.dart';
 import '../session.dart';
 import '../ui.dart';
+import 'settings_screen.dart';
 import 'users_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -15,6 +17,15 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _hide = true;
   bool _busy = false;
   String _error = '';
+  bool _fresh = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Backup.isFresh().then((v) {
+      if (mounted) setState(() => _fresh = v);
+    });
+  }
 
   @override
   void dispose() {
@@ -130,6 +141,26 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ]),
                 ),
+                if (_fresh) ...[
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await restoreFlow(context);
+                      final v = await Backup.isFresh();
+                      if (mounted) setState(() => _fresh = v);
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: C.gold),
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    icon: const Icon(Icons.settings_backup_restore_rounded, color: C.gold),
+                    label: const Text('Restore from backup'),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('Reinstalled the app? Pick a file from Downloads/BRV POS/Backups.',
+                      textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 12.5)),
+                ],
                 const SizedBox(height: 18),
                 const Text('BRV Integrated Systems Limited',
                     textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 12.5)),

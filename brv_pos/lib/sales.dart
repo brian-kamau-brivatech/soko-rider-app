@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'backup.dart';
 import 'db.dart';
 import 'kra.dart';
 import 'session.dart';
@@ -226,6 +227,7 @@ class Sales {
         if (v('mrcNo').isNotEmpty) s.mrcNo = v('mrcNo');
         await s.save();
       }
+      Backup.auto(); // keep the backup in Downloads up to date (in the background)
       return SaleOutcome(sale: await Sale.load(saleId));
     }
 

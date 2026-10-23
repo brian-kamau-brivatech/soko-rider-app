@@ -282,6 +282,65 @@ class MainActivity : FlutterActivity() {
         startActivity(Intent.createChooser(send, "Share receipt"))
     }
 
+    // ---- Backups: saved in Downloads/BRV POS/Backups, which stays after uninstall ----
+    private var pickResult: MethodChannel.Result? = null
+    private val pickCode = 7301
+
+    private fun saveBackup(bytes: ByteArray, name: String, overwrite: String?): android.net.Uri? {
+        if (overwrite != null && overwrite.startsWith("content:")) {
+            try {
+                val u = android.net.Uri.parse(overwrite)
+                contentResolver.openOutputStream(u, "wt")?.use { it.write(bytes) } ?: throw Exception("gone")
+                return u
+            } catch (e: Exception) {
+                // not ours any more (e.g. after reinstall): write a new file
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues()
+            values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+            values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/BRV POS/Backups")
+            val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            return uri
+        }
+        @Suppress("DEPRECATION")
+        val dir = java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "BRV POS/Backups")
+        dir.mkdirs()
+        val f = java.io.File(dir, name)
+        java.io.FileOutputStream(f).use { it.write(bytes) }
+        return android.net.Uri.fromFile(f)
+    }
+
+    private fun shareFile(uri: android.net.Uri, title: String) {
+        if (uri.scheme != "content") return
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("application/octet-stream")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, title))
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != pickCode) return
+        val r = pickResult ?: return
+        pickResult = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            r.success(null)
+            return
+        }
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            r.success(bytes)
+        } catch (e: Exception) {
+            r.error("read", e.message, null)
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "brv/print").setMethodCallHandler { call, result ->
@@ -349,6 +408,31 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    "saveBackup" -> {
+                        try {
+                            val bytes = call.argument<ByteArray>("bytes")!!
+                            val uri = saveBackup(bytes, call.argument<String>("name") ?: "BRV-POS.brvpos", call.argument<String>("uri"))
+                            if (uri != null && (call.argument<Boolean>("share") ?: false)) shareFile(uri, "Share backup")
+                            result.success(uri?.toString())
+                        } catch (e: Exception) {
+                            result.error("backup", e.message, null)
+                        }
+                    }
+                    "deleteUri" -> {
+                        try {
+                            contentResolver.delete(android.net.Uri.parse(call.argument<String>("uri") ?: ""), null, null)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "pickFile" -> {
+                        pickResult?.success(null)
+                        pickResult = result
+                        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(i, pickCode)
+                    }
                     "openUrl" -> {
                         try {
                             val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(call.argument<String>("url") ?: ""))
@@ -370,6 +454,8 @@ open(main, 'w').write(KT)
 p = 'android/app/src/main/AndroidManifest.xml'
 c = open(p).read()
 perms = ['INTERNET', 'QUERY_ALL_PACKAGES']
+if 'WRITE_EXTERNAL_STORAGE' not in c:
+    c = c.replace('<application', '    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <application', 1)
 tags = ''.join('    <uses-permission android:name="android.permission.%s" />\n' % x
                for x in perms if ('permission.%s"' % x) not in c)
 c = c.replace('<application', tags + '    <application', 1)

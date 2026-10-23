@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
 
 /// Users and who is signed in. There is no sign-up: the first account is
@@ -65,11 +66,28 @@ class Session extends ChangeNotifier {
   void signIn(Map<String, dynamic> u) {
     user = u;
     notifyListeners();
+    // Stay signed in on this device until Sign out.
+    SharedPreferences.getInstance().then((p) => p.setInt('signed_in_user', u['id'] as int));
   }
 
   void signOut() {
     user = null;
     notifyListeners();
+    SharedPreferences.getInstance().then((p) => p.remove('signed_in_user'));
+  }
+
+  /// At start-up: sign the last user back in (if still active).
+  Future<void> restore() async {
+    final p = await SharedPreferences.getInstance();
+    final id = p.getInt('signed_in_user');
+    if (id == null) return;
+    final db = await Db.get();
+    final r = await db.query('users', where: 'id = ? AND active = 1', whereArgs: [id], limit: 1);
+    if (r.isEmpty) {
+      await p.remove('signed_in_user');
+      return;
+    }
+    user = Map<String, dynamic>.from(r.first);
   }
 
   Future<void> reload() async {

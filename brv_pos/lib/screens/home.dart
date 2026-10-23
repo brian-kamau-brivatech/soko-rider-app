@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../backup.dart';
 import '../kra_check.dart';
 import '../reports.dart';
 import '../sales.dart';
@@ -26,6 +27,7 @@ class _HomeState extends State<Home> {
   ReportData? _today;
   int _waiting = 0;
   int _unconfirmed = 0;
+  String _error = '';
 
   @override
   void initState() {
@@ -35,6 +37,7 @@ class _HomeState extends State<Home> {
     Settings.i.addListener(_rebuild);
     // Confirm recent sales with KRA in the background.
     Future.microtask(KraCheck.checkRecent);
+    Future.microtask(Backup.auto);
   }
 
   @override
@@ -49,16 +52,21 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _load() async {
-    final day = Reports.ymd(DateTime.now());
-    final d = await Reports.build(day, day);
-    final p = await Sales.pendingSale();
-    final u = await KraCheck.unconfirmedCount();
-    if (mounted) {
-      setState(() {
-        _today = d;
-        _waiting = p == null ? 0 : 1;
-        _unconfirmed = u;
-      });
+    try {
+      final day = Reports.ymd(DateTime.now());
+      final d = await Reports.build(day, day);
+      final p = await Sales.pendingSale();
+      final u = await KraCheck.unconfirmedCount();
+      if (mounted) {
+        setState(() {
+          _today = d;
+          _waiting = p == null ? 0 : 1;
+          _unconfirmed = u;
+          _error = '';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
     }
   }
 
@@ -137,6 +145,14 @@ class _HomeState extends State<Home> {
               ),
             ]),
           ),
+          if (_error.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: C.redLight, borderRadius: BorderRadius.circular(14)),
+              child: SelectableText('Could not load today\'s totals: $_error', style: const TextStyle(color: C.red)),
+            ),
+          ],
           if (_waiting > 0) ...[
             const SizedBox(height: 12),
             Material(
