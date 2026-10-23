@@ -169,3 +169,38 @@ Future<Map<String, dynamic>?> editCustomer(BuildContext context, [Map<String, dy
     ),
   );
 }
+
+/// Remember the customer typed at checkout: match by KRA PIN, else by name
+/// (and phone); add them if new, fill in anything missing if known.
+Future<void> rememberCustomer({required String name, String tin = '', String phone = ''}) async {
+  final nm = name.trim(), pin = tin.trim().toUpperCase(), ph = phone.trim();
+  if (nm.isEmpty && pin.isEmpty) return;
+  final db = await Db.get();
+  List<Map<String, Object?>> hit = const [];
+  if (pin.isNotEmpty) {
+    hit = await db.query('customers', where: 'tin = ?', whereArgs: [pin], limit: 1);
+  }
+  if (hit.isEmpty && nm.isNotEmpty) {
+    hit = await db.query('customers',
+        where: ph.isEmpty ? 'name = ? COLLATE NOCASE' : 'name = ? COLLATE NOCASE AND (phone = ? OR phone = \'\')',
+        whereArgs: ph.isEmpty ? [nm] : [nm, ph],
+        limit: 1);
+  }
+  if (hit.isEmpty) {
+    await db.insert('customers', {
+      'name': nm.isEmpty ? pin : nm,
+      'tin': pin,
+      'phone': ph,
+      'email': '',
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    return;
+  }
+  final c = hit.first;
+  final upd = <String, Object?>{
+    if (nm.isNotEmpty && '${c['name']}' != nm) 'name': nm,
+    if (pin.isNotEmpty && '${c['tin'] ?? ''}' != pin) 'tin': pin,
+    if (ph.isNotEmpty && '${c['phone'] ?? ''}' != ph) 'phone': ph,
+  };
+  if (upd.isNotEmpty) await db.update('customers', upd, where: 'id = ?', whereArgs: [c['id']]);
+}

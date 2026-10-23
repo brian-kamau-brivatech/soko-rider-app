@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db.dart';
 import '../kra.dart';
+import '../kra_check.dart';
 import '../sales.dart';
 import '../ui.dart';
 import 'sale_screen.dart';
@@ -16,13 +17,27 @@ class _SalesScreenState extends State<SalesScreen> {
   List<Map<String, dynamic>> _rows = [];
   List<Map<String, dynamic>> _waiting = [];
   String _q = '';
+  String _filter = 'all'; // all | kra | pending | void
   bool _loading = true;
+  bool _checking = false;
 
   @override
   void initState() {
     super.initState();
     _load();
     salesVersion.addListener(_load);
+    Future.microtask(() => _checkKra(quiet: true));
+  }
+
+  Future<void> _checkKra({bool quiet = false}) async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    final (ok, n) = await KraCheck.checkRecent();
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (!quiet) {
+      toast(context, n == 0 ? 'Could not reach KRA, or nothing to check.' : 'Checked $n: $ok confirmed at KRA.');
+    }
   }
 
   @override
@@ -79,20 +94,25 @@ class _SalesScreenState extends State<SalesScreen> {
     final credit = r['kind'] == 'R';
     final t = DateTime.tryParse('${r['created_at']}');
     final total = (r['tot_amt'] as num?)?.toDouble() ?? 0;
-    final (icon, color) = switch (status) {
-      'signed' => (credit ? Icons.undo_rounded : Icons.verified_rounded, credit ? C.amber : C.green),
-      'pending' => (Icons.hourglass_top_rounded, C.amber),
-      _ => (Icons.block_rounded, C.red),
+    final atKra = r['kra_ok'] == KraCheck.confirmed;
+    final (icon, color, label) = switch (status) {
+      'signed' when atKra => (Icons.cloud_done_rounded, C.green, 'At KRA'),
+      'signed' => (Icons.cloud_upload_rounded, C.amber, 'Signed · KRA not confirmed'),
+      'pending' => (Icons.hourglass_top_rounded, C.amber, 'Waiting for VSCU'),
+      _ => (Icons.block_rounded, C.red, 'Not signed'),
     };
     return ListTile(
       onTap: () => _open(r),
       leading: Icon(icon, color: color),
-      title: Text('${r['trd_invc_no']}', style: h(15, w: FontWeight.w700)),
+      title: Row(children: [
+        Flexible(child: Text('${credit ? 'CN ' : ''}${r['trd_invc_no']}', style: h(15, w: FontWeight.w700), overflow: TextOverflow.ellipsis)),
+        const SizedBox(width: 6),
+        Pill(label, fg: color, bg: color == C.green ? C.greenLight : (color == C.red ? C.redLight : C.amberLight)),
+      ]),
       subtitle: Text([
         if (t != null) '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
         Kra.paymentName('${r['pmt_ty_cd']}'),
         if ('${r['cust_nm'] ?? ''}'.isNotEmpty) '${r['cust_nm']}',
-        if (status == 'failed') 'not signed',
         if ((r['copies'] as int? ?? 0) > 0) '${r['copies']} cop${r['copies'] == 1 ? 'y' : 'ies'}',
       ].join(' · ')),
       trailing: Text(
@@ -112,6 +132,13 @@ class _SalesScreenState extends State<SalesScreen> {
     final creditTotal = sum(signed.where((r) => r['kind'] == 'R'));
     final vat = signed.fold<double>(0, (a, r) => a + ((r['tot_tax'] as num?)?.toDouble() ?? 0) * (r['kind'] == 'R' ? -1 : 1));
     final today = _ymd(_day) == _ymd(DateTime.now());
+    final atKra = signed.where((r) => r['kra_ok'] == KraCheck.confirmed).length;
+    final shown = _rows.where((r) => switch (_filter) {
+          'kra' => r['status'] == 'signed' && r['kra_ok'] == KraCheck.confirmed,
+          'pending' => r['status'] == 'signed' && r['kra_ok'] != KraCheck.confirmed,
+          'void' => r['status'] == 'failed',
+          _ => true,
+        }).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Receipts / Invoices')),
@@ -164,17 +191,56 @@ class _SalesScreenState extends State<SalesScreen> {
                 _stat('VAT', money(vat, symbol: false), 'net'),
               ]),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: signed.isEmpty || atKra == signed.length ? C.greenLight : C.amberLight,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(children: [
+                Icon(signed.isEmpty || atKra == signed.length ? Icons.cloud_done_rounded : Icons.cloud_sync_rounded,
+                    color: signed.isEmpty || atKra == signed.length ? C.green : C.amber),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    signed.isEmpty
+                        ? 'No signed sales on this day.'
+                        : '$atKra of ${signed.length} confirmed at KRA',
+                    style: h(14, w: FontWeight.w700, color: signed.isEmpty || atKra == signed.length ? C.green : C.amber),
+                  ),
+                ),
+                _checking
+                    ? const Padding(padding: EdgeInsets.all(10), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                    : TextButton(onPressed: () => _checkKra(), child: const Text('Check now')),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                for (final f in const [('all', 'All'), ('kra', 'At KRA'), ('pending', 'Not confirmed'), ('void', 'Not signed')])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(f.$2),
+                      selected: _filter == f.$1,
+                      onSelected: (_) => setState(() => _filter = f.$1),
+                    ),
+                  ),
+              ]),
+            ),
+            const SizedBox(height: 12),
           ],
           if (_loading)
             const Padding(padding: EdgeInsets.all(30), child: Center(child: CircularProgressIndicator()))
-          else if (_rows.isEmpty)
-            EmptyNote(Icons.receipt_long_outlined, _q.isEmpty ? 'No sales on this day.' : 'Nothing found.')
+          else if (shown.isEmpty)
+            EmptyNote(Icons.receipt_long_outlined, _q.isEmpty ? 'No receipts here.' : 'Nothing found.')
           else
             Section(_q.isEmpty ? 'Receipts' : 'Results', [
-              for (var i = 0; i < _rows.length; i++) ...[
+              for (var i = 0; i < shown.length; i++) ...[
                 if (i > 0) const Divider(height: 1),
-                _tile(_rows[i]),
+                _tile(shown[i]),
               ],
             ]),
         ]),

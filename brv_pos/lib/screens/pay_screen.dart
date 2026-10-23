@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db.dart';
 import '../kra.dart';
+import '../kra_check.dart';
 import '../receipt.dart';
 import '../sales.dart';
 import '../ui.dart';
@@ -79,9 +80,17 @@ class _PayScreenState extends State<PayScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
 
+    // Save the customer typed here for next time (once the sale is recorded).
+    if (_showCustomer && out.sale != null && (out.ok || out.sale!.pending)) {
+      await rememberCustomer(name: _custNm.text, tin: tin, phone: _custMbl.text);
+      if (!mounted) return;
+    }
+
     if (out.ok) {
       final sale = out.sale!;
       Receipt.printSale(sale);
+      // The VSCU forwards to KRA in the background: look it up shortly after.
+      Future.delayed(const Duration(seconds: 45), () => KraCheck.check(sale));
       await _done(sale);
       if (mounted) Navigator.of(context).pop(true);
       return;
@@ -139,7 +148,7 @@ class _PayScreenState extends State<PayScreen> {
               Text('Change ${money(sale.tendered - sale.total)}', style: h(20, color: C.green)),
             ],
             const SizedBox(height: 8),
-            Text('CU invoice ${sale.row['sdc_id']}/${sale.row['rcpt_no']}', style: const TextStyle(color: C.muted)),
+            Text('CU invoice ${sale.row['sdc_id']}/${sale.invcNo}', style: const TextStyle(color: C.muted)),
           ]),
           actions: [
             TextButton.icon(
@@ -261,7 +270,7 @@ class _PayScreenState extends State<PayScreen> {
           Section('Customer (optional)', [
             SwitchListTile(
               title: const Text('Add customer details'),
-              subtitle: const Text('Needed when the customer wants to claim VAT with their PIN.'),
+              subtitle: const Text('Needed when the customer wants to claim VAT with their PIN. Saved automatically.'),
               value: _showCustomer,
               onChanged: (v) => setState(() => _showCustomer = v),
             ),

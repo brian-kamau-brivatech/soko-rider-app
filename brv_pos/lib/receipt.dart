@@ -184,12 +184,14 @@ class Receipt {
     final r = sale.row;
     final sdcId = '${r['sdc_id'] ?? ''}';
     final rcptNo = r['rcpt_no'];
-    final when = parseEtims('${r['sdc_date'] ?? ''}') ?? sale.created;
+    // The VSCU server clock may be UTC; KRA shows the sale time, so use that.
+    final when = sale.created;
     center('SCU INFORMATION', 20, bold: true);
     row('Date', _date(when), 18);
     row('Time', _time(when), 18);
     row('SCU ID', sdcId, 18);
-    row('CU Invoice No.', '$sdcId/${rcptNo ?? ''}', 18);
+    // KRA's portal numbers the receipt by our invoice number (invcNo).
+    row('CU Invoice No.', '$sdcId/${sale.invcNo}', 18);
     row('Receipt counter', '${rcptNo ?? ''}/${r['tot_rcpt_no'] ?? ''} ${sale.isCredit ? 'NC' : 'NS'}', 18);
     left('Internal data:', 18);
     left(hyphenate('${r['intrl_data'] ?? ''}'), 18, bold: true);

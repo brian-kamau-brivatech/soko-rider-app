@@ -9,8 +9,9 @@ class Db {
   static Future<Database> get() async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, 'brv_pos.db'), version: 2, onUpgrade: (db, oldV, newV) async {
+    _db = await openDatabase(p.join(dir, 'brv_pos.db'), version: 3, onUpgrade: (db, oldV, newV) async {
       if (oldV < 2) await _v2(db);
+      if (oldV < 3) await _v3(db);
     }, onCreate: (db, v) async {
       await db.execute('''CREATE TABLE items(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +64,7 @@ class Db {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT, request TEXT, response TEXT, ok INTEGER, code TEXT, msg TEXT, ms INTEGER, created_at TEXT)''');
       await _v2(db);
+      await _v3(db);
     });
     return _db!;
   }
@@ -93,6 +95,12 @@ class Db {
       created_at TEXT NOT NULL,
       closed_by TEXT DEFAULT '',
       data TEXT)''');
+  }
+
+  /// Version 3: whether KRA's eTIMS portal shows the sale (0 not checked, 1 confirmed, 2 not found yet).
+  static Future<void> _v3(DatabaseExecutor db) async {
+    await db.execute('ALTER TABLE sales ADD COLUMN kra_ok INTEGER DEFAULT 0');
+    await db.execute("ALTER TABLE sales ADD COLUMN kra_checked TEXT DEFAULT ''");
   }
 
   // --- key/value (counters that must change in the same transaction as a sale) ---

@@ -31,6 +31,7 @@ class Sale {
   String get customerName => row['cust_nm'] as String? ?? '';
   String get error => row['error'] as String? ?? '';
   int get copies => row['copies'] as int? ?? 0;
+  int get kraOk => row['kra_ok'] as int? ?? 0; // 1 confirmed on KRA's portal, 2 not found yet
   Map<String, dynamic> get payload {
     try {
       return Map<String, dynamic>.from(jsonDecode(row['payload'] as String? ?? '{}'));

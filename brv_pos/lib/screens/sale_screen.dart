@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../db.dart';
 import '../kra.dart';
+import '../kra_check.dart';
 import '../receipt.dart';
 import '../sales.dart';
 import '../session.dart';
@@ -20,11 +21,71 @@ class _SaleScreenState extends State<SaleScreen> {
   Uint8List? _png;
   bool _busy = false;
   bool _credited = false;
+  bool _checking = false;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _load().then((_) {
+      // Look it up on KRA straight away if not confirmed yet.
+      if (_sale != null && _sale!.signed && _sale!.kraOk != KraCheck.confirmed) _checkKra(quiet: true);
+    });
+  }
+
+  Future<void> _checkKra({bool quiet = false}) async {
+    if (_sale == null || _checking) return;
+    setState(() => _checking = true);
+    final st = await KraCheck.check(_sale!);
+    if (!mounted) return;
+    setState(() => _checking = false);
+    await _load();
+    if (!quiet && mounted) {
+      toast(context, switch (st) {
+        KraCheck.confirmed => 'Confirmed: KRA has this receipt.',
+        KraCheck.notYet => 'KRA does not show it yet. The VSCU sends sales in the background; check again later.',
+        _ => 'Could not reach KRA. Check the internet.',
+      });
+    }
+  }
+
+  Widget _kraCard(Sale s) {
+    final ok = s.kraOk == KraCheck.confirmed;
+    final when = DateTime.tryParse('${s.row['kra_checked'] ?? ''}');
+    String two(int v) => v.toString().padLeft(2, '0');
+    final checked = when == null ? 'Not checked yet' : 'Checked ${two(when.day)}/${two(when.month)} ${two(when.hour)}:${two(when.minute)}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: ok ? C.greenLight : C.amberLight, borderRadius: BorderRadius.circular(14)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(ok ? Icons.cloud_done_rounded : Icons.cloud_upload_rounded, color: ok ? C.green : C.amber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(ok ? 'Transmitted: KRA has this receipt' : 'Signed by the VSCU · not yet confirmed at KRA',
+                style: h(15, color: ok ? C.green : C.amber)),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text('Invoice ${s.invcNo} · CU ${s.row['sdc_id']}/${s.invcNo} · $checked',
+            style: const TextStyle(color: C.ink, fontSize: 12.5)),
+        const SizedBox(height: 8),
+        Row(children: [
+          if (_checking)
+            const Padding(padding: EdgeInsets.all(8), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+          else
+            TextButton.icon(onPressed: () => _checkKra(), icon: const Icon(Icons.refresh_rounded), label: const Text('Check now')),
+          TextButton.icon(
+            onPressed: () async {
+              final ok = await KraCheck.open(s);
+              if (!ok && mounted) toast(context, 'Could not open the browser.');
+            },
+            icon: const Icon(Icons.open_in_new_rounded),
+            label: const Text('Open on KRA'),
+          ),
+        ]),
+      ]),
+    );
   }
 
   Future<void> _load() async {
@@ -227,6 +288,7 @@ class _SaleScreenState extends State<SaleScreen> {
                   ]),
                 ),
               if (s.signed) ...[
+                _kraCard(s),
                 Row(children: [
                   Expanded(
                     child: FilledButton.icon(

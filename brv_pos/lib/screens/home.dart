@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../kra_check.dart';
 import '../reports.dart';
 import '../sales.dart';
 import '../session.dart';
@@ -24,6 +25,7 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> {
   ReportData? _today;
   int _waiting = 0;
+  int _unconfirmed = 0;
 
   @override
   void initState() {
@@ -31,6 +33,8 @@ class _HomeState extends State<Home> {
     _load();
     salesVersion.addListener(_load);
     Settings.i.addListener(_rebuild);
+    // Confirm recent sales with KRA in the background.
+    Future.microtask(KraCheck.checkRecent);
   }
 
   @override
@@ -48,10 +52,12 @@ class _HomeState extends State<Home> {
     final day = Reports.ymd(DateTime.now());
     final d = await Reports.build(day, day);
     final p = await Sales.pendingSale();
+    final u = await KraCheck.unconfirmedCount();
     if (mounted) {
       setState(() {
         _today = d;
         _waiting = p == null ? 0 : 1;
+        _unconfirmed = u;
       });
     }
   }
@@ -144,6 +150,21 @@ class _HomeState extends State<Home> {
               ),
             ),
           ],
+          const SizedBox(height: 12),
+          Material(
+            color: _unconfirmed == 0 ? C.greenLight : C.amberLight,
+            borderRadius: BorderRadius.circular(14),
+            child: ListTile(
+              leading: Icon(_unconfirmed == 0 ? Icons.cloud_done_rounded : Icons.cloud_sync_rounded,
+                  color: _unconfirmed == 0 ? C.green : C.amber),
+              title: Text(
+                _unconfirmed == 0 ? 'All sales confirmed at KRA' : '$_unconfirmed sale(s) not yet confirmed at KRA',
+                style: h(14, color: _unconfirmed == 0 ? C.green : C.amber),
+              ),
+              subtitle: Text(_unconfirmed == 0 ? 'Last 30 days' : 'Tap to see them and check again'),
+              onTap: () => _go(const SalesScreen()),
+            ),
+          ),
           const SizedBox(height: 14),
           GridView.count(
             crossAxisCount: wide ? 4 : 2,
