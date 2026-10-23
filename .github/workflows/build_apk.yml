@@ -8,6 +8,8 @@ on:
       - 'shop_app/**'
       - '.github/workflows/build_customer.yml'
       - '.github/workflows/build_shop.yml'
+      - 'brv_pos/**'
+      - '.github/workflows/build_brv.yml'
   workflow_dispatch:
 
 permissions:
