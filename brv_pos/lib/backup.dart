@@ -51,49 +51,47 @@ class Backup {
     return gzip.encode(utf8.encode(json));
   }
 
-  /// Saves a backup now. [share] opens the share sheet (WhatsApp, email…).
-  static Future<String?> saveNow({bool share = false}) async {
-    final t = DateTime.now();
-    final name = 'BRV-POS-${Settings.i.tin}-${t.year}${_two(t.month)}${_two(t.day)}-${_two(t.hour)}${_two(t.minute)}.brvpos';
-    final uri = await _ch.invokeMethod<String>('saveBackup', {'bytes': Uint8List.fromList(await build()), 'name': name, 'share': share});
-    if (uri != null) await _stamp();
-    return uri;
-  }
+  static const fileName = 'BRV-POS-backup.brvpos';
+
+  /// Saves the backup now, over the same single file. [share] opens the share sheet.
+  static Future<String?> saveNow({bool share = false}) => _write(share: share);
 
   static bool _autoRunning = false;
 
-  /// One automatic backup per day, refreshed after each sale; the last 7 days are kept.
+  /// Refreshes the one backup file (after each sale, Z report and at start-up).
   static Future<void> auto() async {
     if (_autoRunning) return;
     _autoRunning = true;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final t = DateTime.now();
-      final day = '${t.year}-${_two(t.month)}-${_two(t.day)}';
-      final sameDay = prefs.getString('auto_backup_day') == day;
-      final uri = await _ch.invokeMethod<String>('saveBackup', {
-        'bytes': Uint8List.fromList(await build()),
-        'name': 'BRV-POS-auto-$day.brvpos',
-        'uri': sameDay ? prefs.getString('auto_backup_uri') : null,
-      });
-      if (uri == null) return;
-      await prefs.setString('auto_backup_day', day);
-      await prefs.setString('auto_backup_uri', uri);
-      final list = prefs.getStringList('auto_backup_list') ?? [];
-      if (!list.contains(uri)) list.add(uri);
-      while (list.length > 7) {
-        final old = list.removeAt(0);
-        try {
-          await _ch.invokeMethod('deleteUri', {'uri': old});
-        } catch (_) {}
-      }
-      await prefs.setStringList('auto_backup_list', list);
-      await _stamp();
+      await _write();
     } catch (_) {
       // a failed automatic backup must never disturb selling
     } finally {
       _autoRunning = false;
     }
+  }
+
+  /// Always writes over the same file in Downloads/BRV POS/Backups.
+  static Future<String?> _write({bool share = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final uri = await _ch.invokeMethod<String>('saveBackup', {
+      'bytes': Uint8List.fromList(await build()),
+      'name': fileName,
+      'uri': prefs.getString('auto_backup_uri'),
+      'share': share,
+    });
+    if (uri == null) return null;
+    await prefs.setString('auto_backup_uri', uri);
+    // Tidy up daily files made by the previous version.
+    for (final old in prefs.getStringList('auto_backup_list') ?? const <String>[]) {
+      if (old == uri) continue;
+      try {
+        await _ch.invokeMethod('deleteUri', {'uri': old});
+      } catch (_) {}
+    }
+    await prefs.remove('auto_backup_list');
+    await _stamp();
+    return uri;
   }
 
   static Future<void> _stamp() async =>

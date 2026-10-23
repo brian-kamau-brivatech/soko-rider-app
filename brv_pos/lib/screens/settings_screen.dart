@@ -513,14 +513,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   leading: const Icon(Icons.verified_user_rounded, color: C.green),
                   title: const Text('Automatic backup'),
                   subtitle: Text('${t == null ? 'Not made yet' : 'Last: ${two(t.day)}/${two(t.month)} ${two(t.hour)}:${two(t.minute)}'}'
-                      ' · after every sale, in Downloads/BRV POS/Backups (kept even if the app is uninstalled)'),
+                      ' · one file, updated after every sale: Downloads/BRV POS/Backups/BRV-POS-backup.brvpos (kept even if the app is uninstalled)'),
                 );
               },
             ),
             ListTile(
               leading: const Icon(Icons.backup_rounded, color: C.brand),
               title: const Text('Back up now and share'),
-              subtitle: const Text('Saves a copy and lets you send it to WhatsApp, email or Drive'),
+              subtitle: const Text('Updates the backup file and lets you send it to WhatsApp, email or Drive'),
               onTap: () async {
                 setState(() => _busy = true);
                 String? uri;
