@@ -25,6 +25,10 @@ dependencies:
   # Open Google Maps navigation and phone dialer
   url_launcher: ^6.3.0
 
+  # Turn-by-turn navigation: spoken directions, screen stays on while riding
+  flutter_tts: ^4.2.0
+  wakelock_plus: ^1.2.8
+
   # Plus Jakarta Sans (same font as the Soko website tracking page)
   google_fonts: ^6.2.1
 

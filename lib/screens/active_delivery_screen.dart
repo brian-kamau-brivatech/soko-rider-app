@@ -5,11 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../config.dart';
 import '../models/delivery_order.dart';
 import '../services/location_hub.dart';
 import '../services/location_stream_service.dart';
 import '../services/odoo_service.dart';
+import '../services/turn_nav.dart';
 import '../widgets/common.dart';
 
 /// "Location Tracking": live map on top, dark booking sheet below.
@@ -42,6 +44,17 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
   Position? _gps; // latest phone location, for the shop-area check
   StreamSubscription<Position>? _pickupSub;
   static const _pickupHolder = 'pickup';
+
+  // Turn-by-turn navigation (in the app, like Bolt).
+  TurnNavigator? _nav;
+  bool _navOn = false;
+  bool _follow = true;
+  double _mapRotation = 0;
+  final _sheetCtl = DraggableScrollableController();
+
+  /// Before the shop sends the order out the rider rides to the shop,
+  /// afterwards to the customer's pin.
+  LatLng get _navDest => _dispatched ? LatLng(order.destLat!, order.destLng!) : LatLng(ShopArea.lat, ShopArea.lng);
 
   DeliveryOrder get order => _order;
 
@@ -114,6 +127,12 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
     if (!wasDispatched && _dispatched) {
       _statusPoll?.cancel();
       HapticFeedback.mediumImpact();
+      if (_navOn) {
+        _startNav(); // now to the customer
+      } else {
+        _nav?.dispose();
+        _nav = null;
+      }
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('The shop has sent this order out. Customer phone unlocked. Navigate to the customer.'),
       ));
@@ -135,9 +154,95 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
           _speedKmh = pos.speed < 0 ? 0 : pos.speed * 3.6;
           _accuracyM = pos.accuracy;
         });
-        if (!_fitted) _fitBoth();
+        if (_nav != null) _nav!.update(LatLng(pos.latitude, pos.longitude), pos.accuracy);
+        if (_navOn) {
+          if (_nav?.progress?.arrived == true) {
+            _stopNav(arrived: true);
+          } else {
+            _followRider();
+          }
+        } else if (!_fitted) {
+          _fitBoth();
+        }
       },
     );
+  }
+
+  // ---------------- Navigation ----------------
+
+  Future<void> _startNav() async {
+    final from = _riderPos;
+    if (from == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Waiting for GPS. Try again in a moment.')));
+      return;
+    }
+    _nav?.dispose();
+    final nav = TurnNavigator(destination: _navDest, onChanged: () {
+      if (mounted) setState(() {});
+    });
+    setState(() {
+      _nav = nav;
+      _navOn = true;
+      _follow = true;
+    });
+    try {
+      WakelockPlus.enable();
+    } catch (_) {}
+    try {
+      _sheetCtl.animateTo(0.2, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    } catch (_) {}
+    _followRider();
+    final ok = await nav.load(from);
+    if (!mounted || _nav != nav) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(nav.error ?? 'Could not get the road route.'),
+        action: SnackBarAction(label: 'Google Maps', onPressed: _openGoogle),
+      ));
+    }
+  }
+
+  void _stopNav({bool arrived = false}) {
+    if (!_navOn) return;
+    _nav?.dispose(); // stops the voice
+    setState(() {
+      _nav = null;
+      _navOn = false;
+      _follow = true;
+    });
+    try {
+      WakelockPlus.disable();
+    } catch (_) {}
+    try {
+      _mapController.rotate(0);
+    } catch (_) {}
+    _mapRotation = 0;
+    _fitted = false;
+    _fitBoth();
+    try {
+      _sheetCtl.animateTo(0.56, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    } catch (_) {}
+    if (arrived && mounted) {
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_dispatched ? 'You have arrived. Hand over the order and tap Mark Delivered.' : 'You are at the shop. Tap Picked Up.'),
+      ));
+    }
+  }
+
+  void _followRider() {
+    if (!_navOn || !_follow || _riderPos == null) return;
+    try {
+      // Heading up, like Bolt (only while moving, so the map does not spin).
+      final rot = _speedKmh > 4 ? -_heading : _mapRotation;
+      _mapController.moveAndRotate(_riderPos!, 17.5, rot);
+      _mapRotation = rot;
+    } catch (_) {}
+  }
+
+  void _openGoogle() {
+    final d = _navDest;
+    openNavigation(context, d.latitude, d.longitude);
   }
 
   void _fitBoth() {
@@ -224,6 +329,12 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
 
   @override
   void dispose() {
+    _nav?.dispose();
+    if (_navOn) {
+      try {
+        WakelockPlus.disable();
+      } catch (_) {}
+    }
     _statusPoll?.cancel();
     _stopWatchingShopArea();
     _locationService.stopStreaming();
@@ -270,18 +381,41 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 onMapReady: () {
                   if (_riderPos != null) _fitBoth();
                 },
+                onPositionChanged: (camera, hasGesture) {
+                  _mapRotation = camera.rotation;
+                  if (hasGesture && _navOn && _follow) setState(() => _follow = false);
+                },
               ),
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'ke.co.sokoexpressmtaani.rider_app',
                 ),
-                if (_riderPos != null)
+                if (_nav?.route != null)
                   PolylineLayer(polylines: [
-                    Polyline(points: [_riderPos!, dest], strokeWidth: 5, color: SokoColors.ink.withOpacity(0.85)),
+                    Polyline(points: _nav!.route!.path, strokeWidth: 9, color: Colors.white),
+                    Polyline(points: _nav!.route!.path, strokeWidth: 6, color: const Color(0xFF1A73E8)),
+                  ])
+                else if (_riderPos != null)
+                  PolylineLayer(polylines: [
+                    Polyline(points: [_riderPos!, _navOn ? _navDest : dest], strokeWidth: 5, color: SokoColors.ink.withOpacity(0.85)),
                   ]),
                 MarkerLayer(
                   markers: [
+                    if (!_dispatched)
+                      Marker(
+                        point: LatLng(ShopArea.lat, ShopArea.lng),
+                        width: 38,
+                        height: 38,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: SokoColors.ink,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                          ),
+                          child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 18),
+                        ),
+                      ),
                     Marker(
                       point: dest,
                       width: 34,
@@ -308,7 +442,7 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                             boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 10)],
                           ),
                           child: Transform.rotate(
-                            angle: _heading * math.pi / 180,
+                            angle: (_heading + _mapRotation) * math.pi / 180,
                             child: const Icon(Icons.navigation, color: Colors.white, size: 20),
                           ),
                         ),
@@ -323,8 +457,8 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
             ),
           ),
 
-          // Top bar
-          SafeArea(
+          // Top bar (turn banner while navigating)
+          if (_navOn) SafeArea(child: _navBanner()) else SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
@@ -343,9 +477,27 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
             ),
           ),
 
+          if (_navOn && !_follow)
+            Positioned(
+              right: 16,
+              bottom: MediaQuery.of(context).size.height * 0.22 + 12,
+              child: FloatingActionButton.extended(
+                heroTag: 'recentre',
+                backgroundColor: Colors.white,
+                foregroundColor: SokoColors.ink,
+                icon: const Icon(Icons.navigation_rounded),
+                label: const Text('Re-centre', style: TextStyle(fontWeight: FontWeight.w800)),
+                onPressed: () {
+                  setState(() => _follow = true);
+                  _followRider();
+                },
+              ),
+            ),
+
           DraggableScrollableSheet(
+            controller: _sheetCtl,
             initialChildSize: 0.56,
-            minChildSize: 0.3,
+            minChildSize: 0.2,
             maxChildSize: 0.92,
             snap: true,
             builder: (context, scroll) => Container(
@@ -455,11 +607,9 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                 side: const BorderSide(color: Color(0xFF4B5563)),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              icon: const Icon(Icons.navigation_rounded),
-              label: Text(_dispatched ? 'Navigate' : 'To Shop', style: const TextStyle(fontWeight: FontWeight.w700)),
-              onPressed: () => _dispatched
-                  ? openNavigation(context, order.destLat!, order.destLng!)
-                  : openNavigation(context, ShopArea.lat, ShopArea.lng),
+              icon: Icon(_navOn ? Icons.close_rounded : Icons.navigation_rounded),
+              label: Text(_navOn ? 'Stop' : (_dispatched ? 'Navigate' : 'To Shop'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              onPressed: () => _navOn ? _stopNav() : _startNav(),
             ),
           ),
         ),
@@ -486,6 +636,15 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
           ),
         ),
       ]),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          style: TextButton.styleFrom(foregroundColor: Colors.white70, padding: EdgeInsets.zero),
+          icon: const Icon(Icons.map_outlined, size: 18),
+          label: const Text('Open in Google Maps instead'),
+          onPressed: _openGoogle,
+        ),
+      ),
       if (!_dispatched && !_pickupConfirmed)
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -527,6 +686,94 @@ class _ActiveDeliveryScreenState extends State<ActiveDeliveryScreen> {
                     body: 'Hi, this is your Soko Express Mtaani rider with order ${order.trackingNo}. ')),
       ]),
     ];
+  }
+
+  /// Bolt-style banner: next turn, distance to it, then the one after.
+  Widget _navBanner() {
+    final nav = _nav;
+    final p = nav?.progress;
+    final next = p?.next;
+    final now = DateTime.now().add(Duration(seconds: (p?.remainingS ?? 0).round()));
+    String two(int v) => v.toString().padLeft(2, '0');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Material(
+          color: const Color(0xFF0F7A3D),
+          elevation: 6,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            child: (nav == null || nav.loading && p == null)
+                ? const Row(children: [
+                    SizedBox(width: 26, height: 26, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)),
+                    SizedBox(width: 14),
+                    Expanded(child: Text('Finding the best road…', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700))),
+                  ])
+                : next == null
+                    ? Row(children: [
+                        const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 30),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Text(nav.error ?? 'No route yet.',
+                                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700))),
+                        TextButton(
+                          onPressed: _startNav,
+                          child: const Text('Retry', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                        ),
+                      ])
+                    : Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                        Icon(next.icon, color: Colors.white, size: 54),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(next.isArrive && p!.toNextM < 30 ? 'Arrived' : navDistance(p!.toNextM),
+                                style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900, height: 1.05)),
+                            const SizedBox(height: 2),
+                            Text(next.text,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+                          ]),
+                        ),
+                        IconButton(
+                          tooltip: nav.muted ? 'Voice on' : 'Mute voice',
+                          onPressed: () => setState(() => nav.muted = !nav.muted),
+                          icon: Icon(nav.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded, color: Colors.white, size: 28),
+                        ),
+                      ]),
+          ),
+        ),
+        if (p != null && next != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(children: [
+              if (p.after != null && p.toNextM < 400 && !next.isArrive)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(color: const Color(0xFF0B5C2E), borderRadius: BorderRadius.circular(14)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Text('Then ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    Icon(p.after!.icon, color: Colors.white, size: 20),
+                  ]),
+                ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                ),
+                child: Text(
+                  '${navDistance(p.remainingM)} · ${navDuration(p.remainingS)} · ${two(now.hour)}:${two(now.minute)}',
+                  style: const TextStyle(color: SokoColors.ink, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ]),
+          ),
+      ]),
+    );
   }
 
   Widget _pair(String l1, String v1, String l2, String v2, TextStyle label, TextStyle value, {bool rightGreen = false}) {

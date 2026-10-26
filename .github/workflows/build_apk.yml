@@ -54,6 +54,7 @@ jobs:
               \"        <intent><action android:name=\\\"android.intent.action.VIEW\\\" /><data android:scheme=\\\"https\\\" /></intent>\\n\"
               \"        <intent><action android:name=\\\"android.intent.action.VIEW\\\" /><data android:scheme=\\\"geo\\\" /></intent>\\n\"
               \"        <intent><action android:name=\\\"android.intent.action.DIAL\\\" /><data android:scheme=\\\"tel\\\" /></intent>\\n\"
+              \"        <intent><action android:name=\\\"android.intent.action.TTS_SERVICE\\\" /></intent>\\n\"
           )
           c = c.replace(\"<application\", tags + \"    <application\", 1)
           if \"<queries>\" in c:
