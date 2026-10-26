@@ -91,8 +91,10 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void add(int id) => setQty(id, qty(id) + 1);
-  void remove(int id) => setQty(id, qty(id) - 1);
+  /// One step more / less: 1 for pieces, 0.5 for items sold by weight (kg).
+  void add(int id, [double step = 1]) => setQty(id, _r(qty(id) + step));
+  void remove(int id, [double step = 1]) => setQty(id, _r(qty(id) - step));
+  double _r(double v) => (v * 1000).roundToDouble() / 1000;
 
   void clearCart() {
     cart.clear();

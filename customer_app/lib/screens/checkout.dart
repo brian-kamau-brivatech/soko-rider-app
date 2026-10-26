@@ -65,7 +65,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _requote() async {
     setState(() => _quoting = true);
     try {
-      final q = await ShopApi.quote(_pin.latitude, _pin.longitude);
+      final q = await ShopApi.quote(_pin.latitude, _pin.longitude, Map<int, double>.from(AppStore.instance.cart));
       if (mounted) setState(() => _quote = q);
     } catch (e) {
       if (mounted) setState(() => _quote = null);
@@ -268,6 +268,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         (_quote?.ok ?? false) ? 'Delivery · ${_quote!.km.toStringAsFixed(1)} km' : 'Delivery · by distance',
                         _quoting ? 'Checking…' : (fee != null ? money(fee) : '—'),
                       ),
+                      if (_quote != null && _quote!.ok) ...[
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '${_kg(_quote!.weight)} kg · KES ${_kg(_quote!.rate)}/kg'
+                            '${_quote!.basis == 'minimum' ? ' · minimum charge for this distance' : ''}',
+                            style: const TextStyle(color: C.muted, fontSize: 12.5),
+                          ),
+                        ),
+                      ],
                       if (_quote != null && !_quote!.ok && _quote!.error.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text(_quote!.error, style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13)),
@@ -316,3 +327,5 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         Text(b, style: const TextStyle(fontSize: 14.5)),
       ]);
 }
+
+String _kg(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);

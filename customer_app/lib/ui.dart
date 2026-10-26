@@ -21,7 +21,9 @@ String money(double v) {
   return 'KES ${whole < 0 ? '-' : ''}$s';
 }
 
-String qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(1);
+String qtyText(double q) => q == q.roundToDouble()
+    ? q.toStringAsFixed(0)
+    : q.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
 
 TextStyle head(double size, {FontWeight w = FontWeight.w700, Color color = C.ink}) =>
     GoogleFonts.poppins(fontSize: size, fontWeight: w, color: color);
@@ -150,12 +152,13 @@ class QtyControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = AppStore.instance;
     final q = store.qty(product.id);
+    final step = product.decimal ? 0.5 : 1.0;
     if (q <= 0) {
       return SizedBox(
         width: width,
         height: 36,
         child: ElevatedButton.icon(
-          onPressed: () => store.add(product.id),
+          onPressed: () => product.decimal ? _typeQty(context, store, product) : store.add(product.id),
           icon: const Icon(Icons.add_rounded, size: 18),
           label: Text('Add', style: head(13.5, w: FontWeight.w600, color: Colors.white)),
           style: ElevatedButton.styleFrom(
@@ -188,12 +191,57 @@ class QtyControl extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 3),
       decoration: BoxDecoration(color: C.greenLight, borderRadius: BorderRadius.circular(10)),
       child: Row(children: [
-        btn(Icons.remove_rounded, () => store.remove(product.id), false, 'One less ${product.name}'),
-        Expanded(child: Center(child: Text(qtyText(q), style: head(15, w: FontWeight.w600)))),
-        btn(Icons.add_rounded, () => store.add(product.id), true, 'One more ${product.name}'),
+        btn(Icons.remove_rounded, () => store.remove(product.id, step), false, 'Less ${product.name}'),
+        Expanded(
+          child: InkWell(
+            onTap: product.decimal ? () => _typeQty(context, store, product) : null,
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  product.decimal && product.uom.isNotEmpty ? '${qtyText(q)} ${product.uom}' : qtyText(q),
+                  style: head(15, w: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+        ),
+        btn(Icons.add_rounded, () => store.add(product.id, step), true, 'More ${product.name}'),
       ]),
     );
   }
+}
+
+/// Items sold by weight: type the exact amount, e.g. 1.5 kg.
+Future<void> _typeQty(BuildContext context, AppStore store, Product product) async {
+  final current = store.qty(product.id);
+  final c = TextEditingController(text: current > 0 ? qtyText(current) : '');
+  final v = await showDialog<double>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(product.name),
+      content: TextField(
+        controller: c,
+        autofocus: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: 'How many ${product.uom.isEmpty ? '' : product.uom}?',
+          hintText: 'e.g. 1.5',
+          suffixText: product.uom,
+        ),
+        onSubmitted: (t) => Navigator.pop(ctx, double.tryParse(t.trim().replaceAll(',', '.'))),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, double.tryParse(c.text.trim().replaceAll(',', '.'))),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+  if (v == null || v < 0) return;
+  store.setQty(product.id, (v * 1000).roundToDouble() / 1000);
 }
 
 class ProductCard extends StatelessWidget {

@@ -17,6 +17,7 @@ class Product {
   final String name;
   final double price;
   final String uom;
+  final bool decimal; // sold by weight/volume (kg, g, L): 1.5 allowed
   final String description;
   final List<int> categIds;
   final String image;
@@ -26,6 +27,7 @@ class Product {
         name = _s(j['name']),
         price = _d(j['price']),
         uom = _s(j['uom']),
+        decimal = j['decimal'] == true,
         description = _s(j['description']),
         categIds = ((j['categ_ids'] as List?) ?? const []).map(_i).toList(),
         image = absUrl(_s(j['image'])),
@@ -62,13 +64,23 @@ class Catalog {
 
 class Quote {
   final bool ok;
-  final double km;
+  final double km; // road distance from the shop
   final double fee;
+  final double weight; // total kg of the cart
+  final double rate; // KES per kg for this distance
+  final double minimum; // band minimum charge
+  final String basis; // 'weight' or 'minimum'
+  final bool onRequest; // beyond the price table
   final String error;
   Quote.fromJson(Map<String, dynamic> j)
       : ok = j['ok'] == true,
         km = _d(j['km']),
         fee = _d(j['fee']),
+        weight = _d(j['weight']),
+        rate = _d(j['rate']),
+        minimum = _d(j['minimum']),
+        basis = _s(j['basis']),
+        onRequest = j['on_request'] == true,
         error = _s(j['error']);
 }
 
@@ -212,8 +224,14 @@ class ShopApi {
 
   static Future<Catalog> catalog() async => Catalog.fromJson(await _call('/soko/shop/catalog', {}));
 
-  static Future<Quote> quote(double lat, double lng) async =>
-      Quote.fromJson(await _call('/soko/shop/quote', {'lat': lat, 'lng': lng}));
+  /// Delivery fee for a location and cart: the higher of (rate per kg x cart weight)
+  /// or the minimum for that road distance.
+  static Future<Quote> quote(double lat, double lng, Map<int, double> lines) async =>
+      Quote.fromJson(await _call('/soko/shop/quote', {
+        'lat': lat,
+        'lng': lng,
+        'lines': lines.entries.map((e) => {'product_id': e.key, 'qty': e.value}).toList(),
+      }));
 
   static Future<ShopOrder> createOrder({
     required String name,
