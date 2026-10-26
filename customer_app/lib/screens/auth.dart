@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
 import '../config.dart';
 import '../store.dart';
@@ -333,6 +334,9 @@ class AccountScreen extends StatelessWidget {
                   }),
                   const Divider(height: 1, color: C.line, indent: 52),
                   _row(Icons.location_on_outlined, s.street.isEmpty ? 'No saved address yet' : s.street, null),
+                  const Divider(height: 1, color: C.line, indent: 52),
+                  _row(Icons.privacy_tip_outlined, 'Privacy policy',
+                      () => launchUrl(Uri.parse('${AppConfig.siteUrl}/privacy'), mode: LaunchMode.externalApplication)),
                 ]),
               ),
               const SizedBox(height: 24),
@@ -352,11 +356,93 @@ class AccountScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: () => _confirmDelete(context),
+                icon: const Icon(Icons.delete_forever_outlined, size: 20),
+                label: const Text('Delete my account'),
+                style: TextButton.styleFrom(foregroundColor: C.muted),
+              ),
             ]),
           ),
         );
       },
     );
+  }
+
+  /// Delete the account: warn, ask for the PIN, then erase it on the server.
+  Future<void> _confirmDelete(BuildContext context) async {
+    final pin = TextEditingController();
+    var busy = false;
+    String? error;
+    final done = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Delete your account?'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('This erases your name, phone number, email, saved addresses and map pins, and signs you out. '
+                'Past orders stay in our records without your details, as tax law requires. This cannot be undone.'),
+            const SizedBox(height: 14),
+            TextField(
+              controller: pin,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              enabled: !busy,
+              decoration: const InputDecoration(labelText: 'Enter your PIN to confirm', counterText: '', border: OutlineInputBorder()),
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 8),
+              Text(error!, style: const TextStyle(color: Color(0xFFB91C1C), fontWeight: FontWeight.w600)),
+            ],
+          ]),
+          actions: [
+            TextButton(onPressed: busy ? null : () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB91C1C)),
+              onPressed: busy
+                  ? null
+                  : () async {
+                      if (pin.text.trim().length < 4) {
+                        setD(() => error = 'Enter your 4-6 digit PIN.');
+                        return;
+                      }
+                      setD(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        await ShopApi.deleteAccount(AppStore.instance.session, pin.text.trim());
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } on ApiError catch (e) {
+                        setD(() {
+                          busy = false;
+                          error = e.message;
+                        });
+                      } catch (_) {
+                        setD(() {
+                          busy = false;
+                          error = 'No connection. Try again.';
+                        });
+                      }
+                    },
+              child: busy
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    pin.dispose();
+    if (done == true) {
+      await AppStore.instance.signOut();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Your account has been deleted.')));
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   Widget _row(IconData icon, String label, VoidCallback? onTap) => ListTile(

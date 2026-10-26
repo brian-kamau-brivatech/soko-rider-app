@@ -222,6 +222,10 @@ class ShopApi {
 
   static Future<Map<String, dynamic>> me(String session) => _auth('/soko/shop/me', {'session': session});
 
+  /// Deletes the customer's account (Google Play rule). Asks for the PIN again.
+  static Future<Map<String, dynamic>> deleteAccount(String session, String pin) =>
+      _auth('/soko/shop/delete_account', {'session': session, 'pin': pin});
+
   static Future<Catalog> catalog() async => Catalog.fromJson(await _call('/soko/shop/catalog', {}));
 
   /// Delivery fee for a location and cart: the higher of (rate per kg x cart weight)
