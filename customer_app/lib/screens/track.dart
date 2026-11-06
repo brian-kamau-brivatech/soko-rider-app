@@ -79,7 +79,7 @@ class _TrackScreenState extends State<TrackScreen> {
 
   LatLng get _dest {
     final c = AppStore.instance.catalog;
-    return LatLng(_o.destLat ?? c?.shopLat ?? -0.303099, _o.destLng ?? c?.shopLng ?? 36.080026);
+    return LatLng(_o.destLat ?? c?.shopLat ?? -0.271003, _o.destLng ?? c?.shopLng ?? 36.006491);
   }
 
   LatLng? get _rider => (_o.riderLat != null && _o.riderLng != null) ? LatLng(_o.riderLat!, _o.riderLng!) : null;

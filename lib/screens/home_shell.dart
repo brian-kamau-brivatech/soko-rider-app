@@ -80,7 +80,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       _go(0);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Order ${offer.order.trackingNo} is yours. Head to the shop to pick it up.'),
-        action: SnackBarAction(label: 'Navigate', onPressed: () => openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude)),
+        action: SnackBarAction(label: 'Navigate', onPressed: () => openNavigation(context, ShopArea.lat, ShopArea.lng)),
       ));
     }
     // Another request may be waiting.

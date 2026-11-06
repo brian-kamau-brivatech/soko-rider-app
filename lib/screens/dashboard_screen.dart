@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../config.dart';
+import '../services/odoo_service.dart' show ShopArea;
 import '../models/delivery_order.dart';
 import '../services/location_stream_service.dart';
 import '../services/presence_service.dart';
@@ -297,7 +298,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: SokoCard(
                 color: SokoColors.greenTint,
                 borderColor: SokoColors.leaf.withOpacity(0.35),
-                onTap: () => openNavigation(context, AppConfig.shopLatitude, AppConfig.shopLongitude),
+                onTap: () => openNavigation(context, ShopArea.lat, ShopArea.lng),
                 padding: const EdgeInsets.all(18),
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

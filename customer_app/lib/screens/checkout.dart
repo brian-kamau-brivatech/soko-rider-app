@@ -40,7 +40,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _requote());
     } else {
       final c = s.catalog;
-      _pin = LatLng(c?.shopLat ?? -0.303099, c?.shopLng ?? 36.080026);
+      _pin = LatLng(c?.shopLat ?? -0.271003, c?.shopLng ?? 36.006491);
     }
   }
 

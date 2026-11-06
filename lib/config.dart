@@ -6,8 +6,8 @@ class AppConfig {
 
   // Soko Express Mtaani Shop (Nakuru CBD Pick-up Point)
   static const String shopName = 'Soko Shop, Nakuru CBD';
-  static const double shopLatitude  = -0.303099;
-  static const double shopLongitude = 36.080026;
+  static const double shopLatitude  = -0.271003;
+  static const double shopLongitude = 36.006491;
 
   // Background GPS Settings
   static const int gpsIntervalSeconds       = 3;
