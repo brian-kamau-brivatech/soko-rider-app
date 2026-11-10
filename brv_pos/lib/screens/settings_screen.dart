@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../backup.dart';
 import '../db.dart';
+import '../licence.dart';
 import '../receipt.dart';
 import '../sales.dart';
 import '../session.dart';
@@ -12,6 +13,7 @@ import '../settings.dart';
 import '../ui.dart';
 import '../vscu.dart';
 import 'calls_screen.dart';
+import 'licence_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool firstRun;
@@ -40,15 +42,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _classes = 0;
   String _printerLabel = 'Automatic';
 
+  /// KRA device, receipt header and numbering are for the BRV technician only.
+  bool get _locked => !Tech.unlocked;
+
+  Widget _guard(Widget w) => _locked ? IgnorePointer(child: Opacity(opacity: 0.5, child: w)) : w;
+
+  Future<void> _unlock() async {
+    await techUnlock(context);
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    Licence.i.addListener(_licChanged);
     _refreshNumbers();
     _loadPrinterLabel();
   }
 
+  void _licChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    Licence.i.removeListener(_licChanged);
     for (final c in [_url, _tin, _bhf, _serial, _name, _address, _phone, _email, _header, _footer]) {
       c.dispose();
     }
@@ -271,8 +289,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     final options = <(String, String, String)>[
       ('auto', 'Automatic', printers.isEmpty ? 'No direct printer found: uses the print screen' : 'First printer that prints without a preview'),
-      for (final pr in printers) ('${pr['id']}', '${pr['label']}', 'Prints straight away · ${pr['package']}'),
-      ('dialog', 'Android print screen', 'Shows a preview first; also lets you pick Bluetooth or network printers'),
+      for (final pr in printers)
+        ('${pr['id']}', '${pr['label']}',
+            '${pr['id']}'.startsWith('bt:') ? 'Bluetooth receipt printer (ESC/POS) · ${pr['package']}' : 'Prints straight away · ${pr['package']}'),
+      ('dialog', 'Android print screen', 'Shows a preview first; also lets you pick network printers'),
     ];
     final picked = await showModalBottomSheet<String>(
       context: context,
@@ -288,6 +308,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: Text(o.$3),
               onTap: () => Navigator.pop(ctx, o.$1),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            child: Text(
+              info['bluetoothAllowed'] == false
+                  ? 'To list Bluetooth printers, allow "Nearby devices" for BRV POS when Android asks, then open Printer again.'
+                  : 'Bluetooth printer not listed? Switch it on, pair it in Android Bluetooth settings, then open Printer again.',
+              style: const TextStyle(color: C.muted, fontSize: 12.5),
+            ),
+          ),
           const SizedBox(height: 8),
         ]),
       ),
@@ -314,7 +343,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ok = await Receipt.printPng(png, 'BRV POS test');
     if (!mounted) return;
     toast(context, !ok
-        ? 'Could not print.'
+        ? (Receipt.lastMethod == 'bt_failed'
+            ? 'The Bluetooth printer did not answer. Check it is on, charged and paired, then try again.'
+            : 'Could not print.')
         : Receipt.lastMethod == 'dialog'
             ? 'Used the Android print screen. Pick your printer under Printer.'
             : 'Printed directly, no preview.');
@@ -359,14 +390,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(color: C.brand, borderRadius: BorderRadius.circular(16)),
               child: const Text(
-                'Enter your VSCU address and the device details registered on the KRA eTIMS portal, '
-                'then tap Connect device (or Save). After that you can add items and start selling.',
+                'BRV technician: tap Unlock below and create the technician PIN, then enter the VSCU address, '
+                'the device details registered on the KRA eTIMS portal and the receipt header, and tap Connect device. '
+                'After that the shop can add items and start selling.',
                 style: TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
               ),
             ),
           if (_busy) const LinearProgressIndicator(color: C.brand),
 
-          Section('VSCU connection', [
+          Section('Licence & BRV technician', [
+            ListTile(
+              leading: Icon(Licence.i.state == LicState.ok ? Icons.verified_rounded : Icons.key_rounded,
+                  color: Licence.i.canSell ? (Licence.i.state == LicState.ok ? C.green : C.amber) : C.red),
+              title: Text('Licence · device ${Licence.i.code}'),
+              subtitle: Text(Licence.i.message),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LicenceScreen())),
+            ),
+            ListTile(
+              leading: Icon(_locked ? Icons.lock_rounded : Icons.lock_open_rounded, color: _locked ? C.muted : C.green),
+              title: Text(_locked ? 'Technician settings locked' : 'Technician settings unlocked'),
+              subtitle: Text(_locked
+                  ? 'VSCU, KRA device, receipt header and invoice numbering: BRV only.'
+                  : 'Locks again by itself after 15 minutes.'),
+              trailing: _locked
+                  ? FilledButton(onPressed: _unlock, child: const Text('Unlock'))
+                  : TextButton(
+                      onPressed: () => setState(Tech.lock),
+                      child: const Text('Lock now'),
+                    ),
+            ),
+            if (!_locked)
+              ListTile(
+                leading: const Icon(Icons.password_rounded, color: C.brand),
+                title: const Text('Change technician PIN'),
+                onTap: () => techChangePin(context),
+              ),
+          ]),
+
+          _guard(Section('VSCU connection', [
             _tf(_url, 'VSCU address', hint: 'http://178.128.254.30:8088', type: TextInputType.url,
                 help: 'Where your VSCU listens: http:// + server IP + : + port. No path.'),
             ListTile(
@@ -376,9 +438,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: _conn.isEmpty ? null : Text(_conn),
               onTap: _testConnection,
             ),
-          ]),
+          ])),
 
-          Section('Device', [
+          _guard(Section('Device', [
             _tf(_tin, 'KRA PIN', hint: 'P051638299E', caps: TextCapitalization.characters),
             _tf(_bhf, 'Branch ID', hint: '00', type: TextInputType.number, help: '00 is the head office.'),
             _tf(_serial, 'Device serial number', hint: 'TACT-CST-34-2024', help: 'Exactly as registered on the eTIMS portal.'),
@@ -414,9 +476,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
-          ]),
+          ])),
 
-          Section('Receipt', [
+          _guard(Section('Receipt header', [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
               child: Row(children: [
@@ -454,6 +516,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _tf(_email, 'Email', type: TextInputType.emailAddress),
             _tf(_header, 'Top message (optional)'),
             _tf(_footer, 'Bottom message', hint: 'Thank you for shopping with us!'),
+          ])),
+
+          Section('Printing', [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
               child: Row(children: [
@@ -466,9 +531,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
             ),
-          ]),
-
-          Section('Printing', [
             ListTile(
               leading: const Icon(Icons.print_outlined, color: C.brand),
               title: const Text('Printer'),
@@ -485,14 +547,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
 
           if (s.initialised)
-            Section('Invoice numbering', [
+            _guard(Section('Invoice numbering', [
               ListTile(
                 title: Text('Next invoice number: $_nextNo', style: h(16)),
                 subtitle: Text('KRA\'s last invoice at initialisation was ${s.lastSaleInvcNo ?? 0}. '
                     'The number is used only when the VSCU signs a sale, so there are no gaps.'),
                 trailing: TextButton(onPressed: _changeNextNo, child: const Text('Change')),
               ),
-            ]),
+            ])),
 
           Section('KRA lists', [
             ListTile(
@@ -536,17 +598,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: const Icon(Icons.settings_backup_restore_rounded, color: C.amber),
               title: const Text('Restore from a backup'),
               subtitle: const Text('Replaces everything on this phone with the backup file you pick'),
-              onTap: () => restoreFlow(context),
+              onTap: () async {
+                if (await techUnlock(context) && context.mounted) await restoreFlow(context);
+                if (mounted) setState(() {});
+              },
             ),
           ]),
 
           Section('More', [
-            SwitchListTile(
-              title: const Text('Send line prices VAT inclusive to eTIMS'),
-              subtitle: const Text('On (recommended): unit price and line amount include VAT. '
-                  'The taxable amount is always without VAT. Off: prices also sent without VAT.'),
-              value: s.taxableInclVat,
-              onChanged: (v) => setState(() => s.taxableInclVat = v),
+            _guard(
+              SwitchListTile(
+                title: const Text('Send line prices VAT inclusive to eTIMS'),
+                subtitle: const Text('On (recommended): unit price and line amount include VAT. '
+                    'The taxable amount is always without VAT. Off: prices also sent without VAT.'),
+                value: s.taxableInclVat,
+                onChanged: (v) => setState(() => s.taxableInclVat = v),
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.history_rounded, color: C.brand),

@@ -362,7 +362,7 @@ class Receipt {
         'printer': await printerChoice(),
       });
       lastMethod = how ?? 'error';
-      return lastMethod != 'error';
+      return lastMethod != 'error' && lastMethod != 'bt_failed';
     } catch (_) {
       lastMethod = 'error';
       return false;

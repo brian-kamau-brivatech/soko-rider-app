@@ -1,0 +1,95 @@
+name: Build BRV PDF ETR (Windows)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'brv_pdf_etr/**'
+      - '.github/workflows/build_pdf_etr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows exe
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: brv_pdf_etr
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packages
+        run: python -m pip install -r requirements.txt
+
+      - name: Version number
+        run: |
+          (Get-Content brvetr/__init__.py) -replace 'VERSION = ".*"', 'VERSION = "1.0.${{ github.run_number }}"' | Set-Content brvetr/__init__.py
+          Get-Content brvetr/__init__.py
+
+      - name: Test signing against a fake VSCU
+        run: |
+          python tests/make_samples.py "$env:RUNNER_TEMP/e2e/samples"
+          python tests/run_e2e.py "$env:RUNNER_TEMP/e2e"
+
+      - name: Build exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name BRV-PDF-ETR
+          --icon assets/brv_etr.ico --add-data "assets;assets"
+          --collect-all pypdfium2 --collect-all pypdfium2_raw --collect-data pdfminer
+          --collect-submodules reportlab.graphics.barcode --collect-data reportlab
+          --hidden-import PIL._tkinter_finder --hidden-import PIL.ImageTk
+          main.py
+
+      - name: Build licence maker (BRV only - not published in the release)
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name BRV-Licence-Maker
+          --icon assets/brv_etr.ico --paths . tools/licence_maker.py
+
+      - name: Check the exe works
+        run: |
+          $p = Start-Process -FilePath dist/BRV-PDF-ETR.exe -ArgumentList '--selftest', "$env:RUNNER_TEMP\st" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path "$env:RUNNER_TEMP\st\selftest_ok.txt")) { throw "exe self-test failed ($($p.ExitCode))" }
+          Write-Host "exe self-test OK"
+
+      - name: Build OCR add-on (optional download, for PDFs whose text is a picture)
+        continue-on-error: true
+        run: |
+          python -m pip install "numpy==2.1.3" "opencv-python-headless==4.10.0.84" "onnxruntime==1.20.1" "pyclipper==1.3.0.post6" "shapely==2.0.6" "PyYAML==6.0.2" six tqdm
+          python -m pip install --no-deps "rapidocr-onnxruntime==1.4.4"
+          pyinstaller --noconfirm --onedir --console --name brv_ocr --distpath dist_ocr --collect-all rapidocr_onnxruntime --collect-all onnxruntime --paths . tools/brv_ocr.py
+          python tests/make_image_pdf.py "$env:RUNNER_TEMP\img.pdf"
+          $out = & dist_ocr/brv_ocr/brv_ocr.exe "$env:RUNNER_TEMP\img.pdf" 0
+          if (-not ("$out" -match "Cooking")) { throw "OCR add-on test failed" }
+          Rename-Item dist_ocr/brv_ocr BRV-OCR
+          Compress-Archive -Path dist_ocr/BRV-OCR -DestinationPath BRV-OCR-addon.zip
+          Write-Host "OCR add-on OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BRV-PDF-ETR
+          path: brv_pdf_etr/dist/BRV-PDF-ETR.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BRV-Licence-Maker-BRV-ONLY
+          path: brv_pdf_etr/dist/BRV-Licence-Maker.exe
+
+      - name: Release with downloadable exe
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pdfetr-v1.0.${{ github.run_number }}
+          name: "BRV PDF ETR v1.0.${{ github.run_number }}"
+          body: "BRV PDF ETR for Windows: signs invoice PDFs from the Input folder with KRA eTIMS (VSCU) and saves the stamped PDF to Output. Download BRV-PDF-ETR.exe. Only for PDFs whose text is a picture (scans, text printed as shapes): also download BRV-OCR-addon.zip and unzip it next to the exe (folder BRV-OCR)."
+          files: |
+            brv_pdf_etr/dist/BRV-PDF-ETR.exe
+            brv_pdf_etr/BRV-OCR-addon.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

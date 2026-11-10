@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+# never commit licence keys or the licence log
+*.pem
+licences.csv

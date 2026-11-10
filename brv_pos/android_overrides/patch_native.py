@@ -5,6 +5,8 @@ Writes MainActivity.kt with the "brv/print" channel:
     else Android printing;
   - printerInfo: printers this device has;
   - savePdf: receipt as PDF in Downloads/BRV POS, optionally shared.
+  - Bluetooth receipt printers (ESC/POS raster over Bluetooth classic, paired in Android settings);
+  - deviceId: the Android ID, for the licence device code.
 Also: app label, internet + plain-HTTP access to the VSCU, printer-service visibility.
 """
 import glob, os
@@ -341,6 +343,118 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ---- Bluetooth receipt printers: ESC/POS raster image over Bluetooth classic (SPP) ----
+    private val btPermCode = 7302
+
+    private fun btAllowed(): Boolean =
+        Build.VERSION.SDK_INT < 31 || checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun askBt() {
+        if (Build.VERSION.SDK_INT >= 31 && !btAllowed()) {
+            try { requestPermissions(arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT), btPermCode) } catch (e: Exception) {}
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun btDevices(): List<android.bluetooth.BluetoothDevice> {
+        if (!btAllowed()) return emptyList()
+        return try {
+            val bm = getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
+            val ad = bm.adapter ?: return emptyList()
+            if (!ad.isEnabled) return emptyList()
+            ad.bondedDevices?.toList() ?: emptyList()
+        } catch (e: Exception) { emptyList() }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun btName(d: android.bluetooth.BluetoothDevice): String =
+        (try { d.name } catch (e: Exception) { null }) ?: d.address
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun looksLikePrinter(d: android.bluetooth.BluetoothDevice): Boolean {
+        val major = try { d.bluetoothClass?.majorDeviceClass ?: -1 } catch (e: Exception) { -1 }
+        if (major == android.bluetooth.BluetoothClass.Device.Major.IMAGING) return true
+        val n = btName(d).lowercase()
+        return listOf("print", "pos", "mtp", "rpp", "thermal", "receipt", "xp-", "pt-", "zj", "goojprt", "bt-", "ocpp", "inner").any { n.contains(it) }
+    }
+
+    // Black-and-white receipt image -> ESC/POS "GS v 0" raster commands, in bands of 128 rows.
+    private fun escposRaster(bmp: android.graphics.Bitmap): ByteArray {
+        val w = bmp.width
+        val h = bmp.height
+        val bw = (w + 7) / 8
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        val out = java.io.ByteArrayOutputStream()
+        out.write(byteArrayOf(0x1B, 0x40))
+        var y0 = 0
+        while (y0 < h) {
+            val band = minOf(128, h - y0)
+            out.write(byteArrayOf(0x1D, 0x76, 0x30, 0x00,
+                (bw and 0xFF).toByte(), ((bw shr 8) and 0xFF).toByte(),
+                (band and 0xFF).toByte(), ((band shr 8) and 0xFF).toByte()))
+            val rows = ByteArray(bw * band)
+            for (y in 0 until band) {
+                for (x in 0 until w) {
+                    val c = px[(y0 + y) * w + x]
+                    val a = (c ushr 24) and 0xFF
+                    val lum = (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
+                    if (a > 127 && lum < 128) {
+                        val i = y * bw + x / 8
+                        rows[i] = (rows[i].toInt() or (0x80 shr (x % 8))).toByte()
+                    }
+                }
+            }
+            out.write(rows)
+            y0 += band
+        }
+        out.write(byteArrayOf(0x1B, 0x64, 0x04))
+        return out.toByteArray()
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun btPrint(mac: String, png: ByteArray): Boolean {
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size) ?: return false
+        val dev = btDevices().firstOrNull { it.address.equals(mac, ignoreCase = true) } ?: return false
+        val spp = java.util.UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        fun connectSock(secure: Boolean): android.bluetooth.BluetoothSocket? {
+            val s = try {
+                if (secure) dev.createRfcommSocketToServiceRecord(spp) else dev.createInsecureRfcommSocketToServiceRecord(spp)
+            } catch (e: Exception) { null } ?: return null
+            return try { s.connect(); s } catch (e: Exception) {
+                try { s.close() } catch (x: Exception) {}
+                null
+            }
+        }
+        val sock = connectSock(true) ?: connectSock(false) ?: return false
+        return try {
+            val data = escposRaster(bmp)
+            val os = sock.outputStream
+            var i = 0
+            while (i < data.size) {
+                val n = minOf(1024, data.size - i)
+                os.write(data, i, n)
+                os.flush()
+                i += n
+                Thread.sleep(15)
+            }
+            // Cheap printers drop what is still in their buffer if the link closes too soon.
+            Thread.sleep(minOf(3000L, 400L + data.size / 20L))
+            true
+        } catch (e: Exception) {
+            false
+        } finally {
+            try { sock.close() } catch (e: Exception) {}
+        }
+    }
+
+    private fun btPrintAsync(mac: String, png: ByteArray, done: (Boolean) -> Unit) {
+        Thread {
+            val ok = try { btPrint(mac, png) } catch (e: Throwable) { false }
+            runOnUiThread { done(ok) }
+        }.start()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "brv/print").setMethodCallHandler { call, result ->
@@ -356,11 +470,23 @@ class MainActivity : FlutterActivity() {
                         } else if (choice == "dialog") {
                             runOnUiThread { printHtml(job, imageHtml(png)) }
                             result.success("dialog")
+                        } else if (choice.startsWith("bt:")) {
+                            btPrintAsync(choice.substring(3), png) { ok -> result.success(if (ok) "bluetooth" else "bt_failed") }
                         } else {
                             val all = discoverPrinters()
                             val picked = if (choice == "auto") all else all.filter { printerId(it) == choice }.ifEmpty { all }
                             directPrint(png, picked) { kind ->
-                                if (kind == "none" || kind == "error") {
+                                val bt = if (choice == "auto") btDevices().firstOrNull { looksLikePrinter(it) } else null
+                                if ((kind == "none" || kind == "error") && bt != null) {
+                                    btPrintAsync(bt.address, png) { ok ->
+                                        if (ok) {
+                                            result.success("bluetooth")
+                                        } else {
+                                            printHtml(job, imageHtml(png))
+                                            result.success("dialog")
+                                        }
+                                    }
+                                } else if (kind == "none" || kind == "error") {
                                     printHtml(job, imageHtml(png))
                                     result.success("dialog")
                                 } else {
@@ -382,11 +508,17 @@ class MainActivity : FlutterActivity() {
                             val app = try { pm.getApplicationLabel(pm.getApplicationInfo(t.first, 0)).toString() } catch (e: Exception) { t.first }
                             val kindName = when (t.third) { "nyx" -> "Built-in printer"; "sunmi" -> "Sunmi printer"; else -> "Printer service" }
                             mapOf("id" to printerId(t), "label" to "$kindName ($app)", "package" to t.first)
+                        }.toMutableList()
+                        val btOk = btAllowed()
+                        if (!btOk) askBt()
+                        for (d in btDevices().sortedBy { if (looksLikePrinter(it)) 0 else 1 }) {
+                            printers.add(mapOf("id" to "bt:" + d.address, "label" to "Bluetooth: " + btName(d), "package" to d.address))
                         }
                         result.success(mapOf(
                             "model" to (Build.MANUFACTURER + " " + Build.MODEL),
                             "android" to Build.VERSION.RELEASE,
                             "printers" to printers,
+                            "bluetoothAllowed" to btOk,
                             "packages" to hits,
                             "printServices" to services
                         ))
@@ -433,6 +565,12 @@ class MainActivity : FlutterActivity() {
                         @Suppress("DEPRECATION")
                         startActivityForResult(i, pickCode)
                     }
+                    "deviceId" -> {
+                        val id = try {
+                            android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                        } catch (e: Exception) { null }
+                        result.success(id ?: "")
+                    }
                     "openUrl" -> {
                         try {
                             val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(call.argument<String>("url") ?: ""))
@@ -453,7 +591,11 @@ open(main, 'w').write(KT)
 
 p = 'android/app/src/main/AndroidManifest.xml'
 c = open(p).read()
-perms = ['INTERNET', 'QUERY_ALL_PACKAGES']
+perms = ['INTERNET', 'QUERY_ALL_PACKAGES', 'BLUETOOTH_CONNECT']
+if 'android.permission.BLUETOOTH"' not in c:
+    c = c.replace('<application', '    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n'
+                  '    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n'
+                  '    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />\n    <application', 1)
 if 'WRITE_EXTERNAL_STORAGE' not in c:
     c = c.replace('<application', '    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <application', 1)
 tags = ''.join('    <uses-permission android:name="android.permission.%s" />\n' % x

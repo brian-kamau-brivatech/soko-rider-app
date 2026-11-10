@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../backup.dart';
 import '../kra_check.dart';
+import '../licence.dart';
 import '../reports.dart';
 import '../sales.dart';
 import '../session.dart';
@@ -10,6 +11,7 @@ import '../ui.dart';
 import 'customers_screen.dart';
 import 'item_form.dart';
 import 'items_screen.dart';
+import 'licence_screen.dart';
 import 'reports_screen.dart';
 import 'sales_screen.dart';
 import 'sell_screen.dart';
@@ -35,6 +37,7 @@ class _HomeState extends State<Home> {
     _load();
     salesVersion.addListener(_load);
     Settings.i.addListener(_rebuild);
+    Licence.i.addListener(_rebuild);
     // Confirm recent sales with KRA in the background.
     Future.microtask(KraCheck.checkRecent);
     Future.microtask(Backup.auto);
@@ -44,6 +47,7 @@ class _HomeState extends State<Home> {
   void dispose() {
     salesVersion.removeListener(_load);
     Settings.i.removeListener(_rebuild);
+    Licence.i.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -153,6 +157,25 @@ class _HomeState extends State<Home> {
               child: SelectableText('Could not load today\'s totals: $_error', style: const TextStyle(color: C.red)),
             ),
           ],
+          if (Licence.i.needsAttention) ...[
+            const SizedBox(height: 12),
+            Material(
+              color: Licence.i.canSell ? C.amberLight : C.redLight,
+              borderRadius: BorderRadius.circular(14),
+              child: ListTile(
+                leading: Icon(Licence.i.canSell ? Icons.schedule_rounded : Icons.block_rounded,
+                    color: Licence.i.canSell ? C.amber : C.red),
+                title: Text(
+                  Licence.i.canSell
+                      ? (Licence.i.state == LicState.trial ? 'Free trial' : 'Licence ending soon')
+                      : 'Selling is stopped: licence',
+                  style: h(14, color: Licence.i.canSell ? C.amber : C.red),
+                ),
+                subtitle: Text(Licence.i.message),
+                onTap: () => _go(const LicenceScreen()),
+              ),
+            ),
+          ],
           if (_waiting > 0) ...[
             const SizedBox(height: 12),
             Material(
@@ -255,6 +278,15 @@ class _HomeState extends State<Home> {
           onTap: () {
             Navigator.pop(context);
             _go(ChangeCredentialsScreen(user: se.user!));
+          },
+        ),
+        ListTile(
+          leading: const Icon(Icons.key_rounded, color: C.brand),
+          title: const Text('Licence'),
+          subtitle: Text(Licence.i.message, maxLines: 2, overflow: TextOverflow.ellipsis),
+          onTap: () {
+            Navigator.pop(context);
+            _go(const LicenceScreen());
           },
         ),
         ListTile(

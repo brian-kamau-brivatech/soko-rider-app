@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../backup.dart';
 import '../session.dart';
 import '../ui.dart';
+import 'licence_screen.dart';
 import 'settings_screen.dart';
 import 'users_screen.dart';
 
@@ -161,7 +162,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Text('Reinstalled the app? Pick a file from Downloads/BRV POS/Backups.',
                       textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 12.5)),
                 ],
-                const SizedBox(height: 18),
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LicenceScreen())),
+                  icon: const Icon(Icons.key_rounded, color: C.gold),
+                  label: const Text('Licence', style: TextStyle(color: Colors.white)),
+                ),
+                const SizedBox(height: 8),
                 const Text('BRV Integrated Systems Limited',
                     textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 12.5)),
               ]),

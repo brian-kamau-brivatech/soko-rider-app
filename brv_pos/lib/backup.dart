@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'db.dart';
+import 'licence.dart';
 import 'settings.dart';
 
 /// Everything BRV POS keeps, in one compressed file saved in
@@ -14,7 +15,7 @@ class Backup {
   static const _ch = MethodChannel('brv/print');
   static const tables = ['items', 'sales', 'sale_lines', 'kv', 'users', 'customers', 'z_reports'];
   // Device-only keys that must not travel in a backup.
-  static const _skipPrefs = {'signed_in_user', 'auto_backup_uri', 'auto_backup_day', 'auto_backup_list', 'last_backup_at'};
+  static const _skipPrefs = {'signed_in_user', 'auto_backup_uri', 'auto_backup_day', 'auto_backup_list', 'last_backup_at', 'lic_fallback_id'};
 
   static String _two(int v) => v.toString().padLeft(2, '0');
 
@@ -161,6 +162,7 @@ class Backup {
     }
     await prefs.remove('signed_in_user');
     await Settings.i.load();
+    await Licence.i.load();
   }
 
   /// A fresh install: no sales yet and only the default admin.

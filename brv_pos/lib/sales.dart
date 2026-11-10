@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'backup.dart';
 import 'db.dart';
 import 'kra.dart';
+import 'licence.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'vscu.dart';
@@ -94,6 +95,8 @@ class Sales {
   }) async {
     final s = Settings.i;
     if (!s.ready) return SaleOutcome(error: 'Set up and initialise the device in Settings first.');
+    await Licence.i.refresh();
+    if (!Licence.i.canSell) return SaleOutcome(error: 'BRV POS licence: ${Licence.i.message}');
     if (lines.isEmpty) return SaleOutcome(error: 'Add at least one item.');
     if (lines.any((l) => l.qty <= 0)) return SaleOutcome(error: 'Quantities must be more than zero.');
     final waiting = await pendingSale();

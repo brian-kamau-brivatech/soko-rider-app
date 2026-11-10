@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'db.dart';
+import 'licence.dart';
 import 'screens/home.dart';
 import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
@@ -10,6 +11,7 @@ import 'ui.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Settings.i.load();
+  await Licence.i.load();
   await Db.get();
   await Session.ensureAdmin();
   await Session.i.restore();

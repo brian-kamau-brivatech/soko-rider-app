@@ -88,7 +88,7 @@ jobs:
         with:
           tag_name: brv-v1.0.${{ github.run_number }}
           name: "BRV POS v1.0.${{ github.run_number }}"
-          body: "BRV POS: KRA eTIMS point of sale that signs sales through your VSCU. Install the APK on the till."
+          body: "BRV POS: KRA eTIMS point of sale for Android handhelds (built-in printer, Bluetooth or Android printing). Signs every sale through the VSCU. Install the APK on the device, then follow brv_pos/README.md: licence by days (BRV Licence Maker, product BRV POS), BRV technician PIN for the KRA and receipt header settings."
           files: |
             brv_pos/build/app/outputs/flutter-apk/app-release.apk
         env:
