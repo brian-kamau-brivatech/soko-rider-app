@@ -276,6 +276,7 @@ class UtangePosApi(http.Controller):
             'receipt_header': (config.receipt_header or '') if 'receipt_header' in config._fields else '',
             'receipt_footer': (config.receipt_footer or '') if 'receipt_footer' in config._fields else '',
             'block_zero': bool(config.utange_block_zero),
+            'needs_open_count': bool(session and config.utange_require_sheet and not self._sheet_of(session)),
             **self._receipt_printer(config),
             'kitchen_printers': self._kitchen_printers(config),
             'points': [{'point': pt, 'label': label, 'location': loc.display_name} for pt, label, loc in config._utange_points()],
@@ -343,6 +344,9 @@ class UtangePosApi(http.Controller):
         session = self._open_session(config)
         if not session:
             return {'ok': False, 'error': 'The shift is closed. Open it first (More > Shift).'}
+        if config.utange_require_sheet and not self._sheet_of(session):
+            return {'ok': False, 'error': 'This shift was opened in Odoo: confirm the opening stock count first.',
+                    'count_required': True}
         Order = env['pos.order'].sudo()
         uid = str(uid or '').strip()[:64]
         if uid:
@@ -582,6 +586,7 @@ class UtangePosApi(http.Controller):
             'count_at_close': bool(config.utange_count_at_close),
             'sheet': {'id': sheet.id, 'name': sheet.name, 'outside': sheet.opened_outside,
                       'open_diffs': sheet.open_diff_count} if sheet else None,
+            'needs_open_count': bool(session and session.state == 'opened' and config.utange_require_sheet and not sheet),
         }
         if not session:
             return data
@@ -696,6 +701,30 @@ class UtangePosApi(http.Controller):
         self._log_as(session, emp, 'Shift opened on the Utange handheld%s. Stock sheet %s (%d opening differences).'
                      % (by, sheet.name, sheet.open_diff_count))
         return {'ok': True, 'message': '%s is open. Stock sheet %s saved.' % (session.name, sheet.name),
+                'info': self._session_info(config, emp, role)}
+
+    @http.route('/utange/pos/sheet_confirm_open', type='json', auth='public', methods=['POST'], csrf=False)
+    def sheet_confirm_open(self, pin=None, config_id=None, cashier=None, counts=None, **kw):
+        """The shift was opened in Odoo (POS screen): the cashier counts and confirms the opening stock now."""
+        config, emp, role, bad = self._guard(pin, config_id, cashier)
+        if bad:
+            return bad
+        session = self._open_session(config)
+        if not session:
+            return {'ok': False, 'error': 'There is no open shift.'}
+        sheet = self._sheet_of(session)
+        if sheet:
+            return {'ok': True, 'message': 'Stock sheet %s is already confirmed.' % sheet.name,
+                    'info': self._session_info(config, emp, role)}
+        counted = self._counts(counts)
+        missing = config._utange_sheet_products().filtered(lambda p: p.id not in counted)
+        if missing:
+            return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
+                len(missing), ', '.join(missing[:3].mapped('display_name'))), 'count_required': True}
+        sheet = request.env['utange.stock.sheet'].sudo()._start(config, session, counted, employee=emp)
+        sheet.message_post(body='Shift opened in Odoo; opening stock counted on the handheld%s.'
+                                % ((' by %s' % emp.name) if emp else ''))
+        return {'ok': True, 'message': 'Opening stock confirmed: %s (%d differences).' % (sheet.name, sheet.open_diff_count),
                 'info': self._session_info(config, emp, role)}
 
     @http.route('/utange/pos/cash_move', type='json', auth='public', methods=['POST'], csrf=False)

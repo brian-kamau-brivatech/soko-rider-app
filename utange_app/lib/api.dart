@@ -183,6 +183,7 @@ class PosSetup {
   final String header;
   final String footer;
   final bool blockZero;
+  final bool needsOpenCount;
   final String receiptPrinterIp;
   final String receiptPrinterVia; // odoo (pos_escpos) | direct | ''
   final List<KitchenPrinter> kitchenPrinters;
@@ -203,6 +204,7 @@ class PosSetup {
         header = ss(j['receipt_header']),
         footer = ss(j['receipt_footer']),
         blockZero = j['block_zero'] == true,
+        needsOpenCount = j['needs_open_count'] == true,
         receiptPrinterIp = ss(j['receipt_printer_ip']),
         receiptPrinterVia = ss(j['receipt_printer_via']),
         kitchenPrinters = ll(j['kitchen_printers']).map(KitchenPrinter.fromJson).toList(),
@@ -353,6 +355,7 @@ class SessionInfo {
   final bool countAtClose;
   final String sheetName;
   final int openDiffs;
+  final bool needsOpenCount;
   SessionInfo.fromJson(Map<String, dynamic> j)
       : config = ss(j['config']),
         state = ss(j['state']),
@@ -371,7 +374,8 @@ class SessionInfo {
         requireSheet = j['require_sheet'] == true,
         countAtClose = j['count_at_close'] == true,
         sheetName = j['sheet'] is Map ? ss(j['sheet']['name']) : '',
-        openDiffs = j['sheet'] is Map ? ii(j['sheet']['open_diffs']) : 0;
+        openDiffs = j['sheet'] is Map ? ii(j['sheet']['open_diffs']) : 0,
+        needsOpenCount = j['needs_open_count'] == true;
   bool get isOpen => state == 'opened';
   bool get isClosing => state == 'closing_control';
   bool get canOpen => state == 'closed' || state == 'opening_control';

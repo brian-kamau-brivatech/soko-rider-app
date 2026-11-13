@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
+import '../idle.dart';
 import '../ui.dart';
 
 /// The stock sheet count: every item must get a number before the shift opens (phase 'open')
@@ -94,7 +95,9 @@ class _CountScreenState extends State<CountScreen> {
           child: Text(diffs.isEmpty
               ? 'All ${items.length} items match. Confirm?'
               : '${diffs.length} items differ from ${_open ? 'the system' : 'expected'}:\n\n${diffs.take(15).map((i) => '• ${i.name}: ${signed(_val(i)! - _ref(i))}').join('\n')}'
-                  '${diffs.length > 15 ? '\n…' : ''}\n\nThe manager sees these differences.'),
+                  '${diffs.length > 15 ? '\n…' : ''}'
+                  '${_open ? '' : '\n\nVariance at selling price: ${ksh(diffs.fold<double>(0, (s, i) => s + (_val(i)! - _ref(i)) * i.price))}'}'
+                  '\n\nThe manager is alerted about these differences.'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Recount')),
@@ -258,7 +261,10 @@ class _CountScreenState extends State<CountScreen> {
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textAlign: TextAlign.center,
             style: h(18),
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) {
+              IdleLock.touch();
+              setState(() {});
+            },
             decoration: InputDecoration(
               hintText: '—',
               isDense: true,

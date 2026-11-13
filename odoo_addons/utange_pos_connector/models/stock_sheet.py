@@ -8,7 +8,7 @@ class UtangeStockSheet(models.Model):
     columns as the paper stock book."""
     _name = 'utange.stock.sheet'
     _description = 'Shift stock sheet'
-    _inherit = ['mail.thread']
+    _inherit = ['mail.thread', 'mail.activity.mixin']
     _order = 'open_date desc, id desc'
 
     name = fields.Char(required=True, default='/', copy=False, readonly=True)
@@ -88,6 +88,7 @@ class UtangeStockSheet(models.Model):
                 pos_lines = self.env['pos.order.line'].sudo().search([
                     ('order_id.session_id', '=', sheet.session_id.id),
                     ('order_id.state', 'in', ('paid', 'done', 'invoiced')),
+                    ('order_id.date_order', '>=', sheet.open_date),
                     ('product_id', 'in', pids)])
                 for pl in pos_lines:
                     sold[pl.product_id.id] = sold.get(pl.product_id.id, 0.0) + pl.qty
@@ -157,6 +158,24 @@ class UtangeStockSheet(models.Model):
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close) if counts else l.expected_close,
                          'closed': True})
             sheet.write({'close_date': now, 'close_employee_id': employee.id if employee else False})
+            sheet._notify_variance()
+
+    def _notify_variance(self):
+        """Closing differences: a to-do for the POS managers and a note on the sheet."""
+        for sheet in self:
+            bad = sheet.line_ids.filtered(lambda l: l.closed and abs(l.close_diff) > 0.0001)
+            if not bad:
+                continue
+            text = ', '.join('%s %+g' % (l.product_id.display_name, l.close_diff) for l in bad[:15])
+            sheet.message_post(body='Closing variance: %s. Value at selling price: %.0f.' % (text, sheet.close_diff_value))
+            group = self.env.ref('point_of_sale.group_pos_manager', raise_if_not_found=False)
+            todo = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
+            for u in (group.users.filtered(lambda u: u.active and not u.share)[:5] if group else []):
+                try:
+                    sheet.activity_schedule(activity_type_id=todo.id if todo else False, user_id=u.id,
+                                            summary='Stock variance %s: %d items' % (sheet.name, len(bad)), note=text)
+                except Exception:
+                    pass
 
     def action_refresh(self):
         self.filtered(lambda s: s.state == 'open')._refresh_movements()

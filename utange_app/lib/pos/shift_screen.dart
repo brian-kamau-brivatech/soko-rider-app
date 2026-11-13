@@ -168,6 +168,23 @@ class _ShiftScreenState extends State<ShiftScreen> {
     }
   }
 
+  Future<void> _confirmOpening() async {
+    final counts = await Navigator.of(context)
+        .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
+    if (counts == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base({'counts': counts}));
+      if (!mounted) return;
+      setState(() => _info = SessionInfo.fromJson(Map<String, dynamic>.from(r['info'] as Map)));
+      toast(context, ss(r['message']));
+    } on ApiError catch (e) {
+      await _err(e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _cashMove() async {
     final amount = double.tryParse(_moveAmount.text.trim());
     if (amount == null || amount <= 0 || _moveReason.text.trim().isEmpty) {
@@ -209,6 +226,20 @@ class _ShiftScreenState extends State<ShiftScreen> {
             return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
               _status(si),
               const SizedBox(height: 14),
+              if (si.isOpen && si.needsOpenCount)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: C.amberLight, borderRadius: BorderRadius.circular(16)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Text('Confirm the opening stock', style: h(16, color: C.amber)),
+                    const SizedBox(height: 4),
+                    const Text('This shift was opened in Odoo without a count. Count every item now; selling on the handheld '
+                        'starts after this.'),
+                    const SizedBox(height: 10),
+                    primaryButton('Count opening stock', _confirmOpening, icon: Icons.fact_check_rounded, color: C.amber, busy: _busy),
+                  ]),
+                ),
               if (si.canOpen) _openCard(si),
               if (si.isOpen && si.canCashMove) _cashMoveCard(),
               if ((si.isOpen || si.isClosing) && si.closing != null) _closeCard(si, si.closing!),

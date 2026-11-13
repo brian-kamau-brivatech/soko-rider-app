@@ -3,6 +3,7 @@ import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
 import 'payment_screen.dart';
+import 'count_screen.dart';
 import 'shift_screen.dart';
 
 /// Sell at the bar: items and prices come from the Odoo POS.
@@ -115,6 +116,21 @@ class _SellScreenState extends State<SellScreen> {
 
   String _qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
 
+  /// The shift was opened in Odoo: count and confirm the opening stock before selling.
+  Future<void> _confirmOpening() async {
+    final counts = await Navigator.of(context)
+        .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
+    if (counts == null || !mounted) return;
+    try {
+      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base({'counts': counts}));
+      if (mounted) toast(context, ss(r['message']));
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+      await Store.i.handle(e);
+    }
+    _load();
+  }
+
   Future<void> _charge() async {
     // Fresh payment methods and session state from Odoo POS on every charge.
     try {
@@ -129,6 +145,10 @@ class _SellScreenState extends State<SellScreen> {
     }
     if (!s.sessionOpen) {
       toast(context, 'The shift is closed. Open it first (More > Shift).');
+      return;
+    }
+    if (s.needsOpenCount) {
+      await _confirmOpening();
       return;
     }
     final sold = await Navigator.of(context).push<bool>(MaterialPageRoute(
@@ -263,6 +283,21 @@ class _SellScreenState extends State<SellScreen> {
               IconButton(tooltip: 'Reload products', onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded)),
             ]),
           ),
+          if (s != null && s.sessionOpen && s.needsOpenCount)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+              decoration: BoxDecoration(color: C.amberLight, borderRadius: BorderRadius.circular(14)),
+              child: Row(children: [
+                const Icon(Icons.fact_check_rounded, color: C.amber),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('This shift was opened in Odoo. Confirm the opening stock before selling.',
+                      style: TextStyle(color: C.amber, fontWeight: FontWeight.w700)),
+                ),
+                TextButton(onPressed: _confirmOpening, child: const Text('Count now')),
+              ]),
+            ),
           if (s != null && !s.sessionOpen)
             Container(
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
