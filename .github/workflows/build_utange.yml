@@ -24,13 +24,13 @@ jobs:
             label: Utange POS
             color: '#0F766E'
             tag: utange-pos
-            apk: Utange-POS.apk
+            apk: Utange-POS
           - mode: manager
             project: utange_manager
             label: Utange Manager
             color: '#12304A'
             tag: utange-manager
-            apk: Utange-Manager.apk
+            apk: Utange-Manager
     defaults:
       run:
         working-directory: utange_app
@@ -108,23 +108,28 @@ jobs:
           done
           exit 1
 
-      - name: Build APK
+      - name: Build APKs (light 64-bit + 32-bit for older handhelds)
         run: |
-          flutter build apk --release --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
+          flutter build apk --release --split-per-abi --target-platform android-arm64,android-arm \
+            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
             --dart-define=APP_MODE=${{ matrix.mode }} --dart-define=ODOO_URL="$UTANGE_URL" --dart-define=ODOO_DB=utangevillage
-          cp build/app/outputs/flutter-apk/app-release.apk ${{ matrix.apk }}
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ${{ matrix.apk }}-64bit.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ${{ matrix.apk }}-32bit.apk
+          ls -lh *.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}
-          path: utange_app/${{ matrix.apk }}
+          path: utange_app/${{ matrix.apk }}-*.apk
 
       - name: Release with downloadable APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ matrix.tag }}-v1.0.${{ github.run_number }}
           name: "${{ matrix.label }} v1.0.${{ github.run_number }}"
-          body: "${{ matrix.label }} for Utange Village Hotel (Odoo POS). Utange POS: handheld at the bar (cashier PIN login, selling, stock sheet at shift open/close, requisitions). Utange Manager: managers' phones (approve requisitions, shifts and stock sheets)."
-          files: utange_app/${{ matrix.apk }}
+          body: "${{ matrix.label }} for Utange Village Hotel (Odoo POS). Utange POS: handheld at the bar (cashier PIN login, selling, stock sheet at shift open/close, requisitions). Utange Manager: managers' phones (approve requisitions, shifts and stock sheets). Download the -64bit.apk (light, for most phones and handhelds); use -32bit.apk only if the 64-bit one says the app is not compatible."
+          files: |
+            utange_app/${{ matrix.apk }}-64bit.apk
+            utange_app/${{ matrix.apk }}-32bit.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
