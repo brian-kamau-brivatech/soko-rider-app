@@ -53,7 +53,6 @@ jobs:
       - name: Generate Android project
         env:
           APP_LABEL: ${{ matrix.label }}
-          ICON_COLOR: ${{ matrix.color }}
         run: |
           sed -i 's/^name: utange_pos/name: ${{ matrix.project }}/' pubspec.yaml
           flutter create --platforms=android --org=ke.co.brivatech --project-name=${{ matrix.project }} .
@@ -61,23 +60,17 @@ jobs:
           rm -rf android/app/src/main/res/mipmap-anydpi-v26
           python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
           python3 - <<'PY'
-          import os
-          from PIL import Image, ImageDraw, ImageFont
-          color = os.environ['ICON_COLOR']
+          from PIL import Image
+          logo = Image.open('../brv_pdf_etr/assets/icon.png').convert('RGBA')
           big = 512
-          im = Image.new('RGB', (big, big), color)
-          d = ImageDraw.Draw(im)
-          try:
-              f = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 330)
-          except Exception:
-              f = ImageFont.load_default(size=330)
-          box = d.textbbox((0, 0), 'U', font=f)
-          w, h = box[2] - box[0], box[3] - box[1]
-          d.text(((big - w) / 2 - box[0], (big - h) / 2 - box[1] - 20), 'U', font=f, fill='white')
-          d.rounded_rectangle((150, 420, 362, 446), radius=13, fill='#C8962E')
+          im = Image.new('RGBA', (big, big), (255, 255, 255, 255))
+          inner = int(big * 0.86)
+          lg = logo.resize((inner, inner), Image.LANCZOS)
+          im.alpha_composite(lg, ((big - inner) // 2, (big - inner) // 2))
+          im = im.convert('RGB')
           for dpi, s in [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]:
               im.resize((s, s), Image.LANCZOS).save("android/app/src/main/res/mipmap-%s/ic_launcher.png" % dpi)
-          print("launcher icons made")
+          print("BRV launcher icons made")
           PY
           python3 android_overrides/patch_native.py
 
@@ -112,7 +105,7 @@ jobs:
         run: |
           flutter build apk --release --split-per-abi --target-platform android-arm64,android-arm \
             --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
-            --dart-define=APP_MODE=${{ matrix.mode }} --dart-define=ODOO_URL="$UTANGE_URL" --dart-define=ODOO_DB=utangevillage
+            --dart-define=APP_MODE=${{ matrix.mode }} --dart-define=ODOO_DB=utangevillage
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ${{ matrix.apk }}-64bit.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ${{ matrix.apk }}-32bit.apk
           ls -lh *.apk

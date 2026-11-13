@@ -90,8 +90,11 @@ class Store extends ChangeNotifier {
 
   // ---------------------------------------------------------------- POS
   /// Checks the device PIN and returns the Points of Sale.
+  String _pendingToken = '';
+
   Future<(String, List<PosConfigInfo>)> checkDevice(String devicePin) async {
     final r = await Api.call('/utange/pos/configs', {'pin': devicePin});
+    _pendingToken = ss(r['token']);
     final company = Map<String, dynamic>.from(r['company'] as Map? ?? const {});
     companyName = ss(company['name']);
     companyId = ii(company['id']);
@@ -99,7 +102,7 @@ class Store extends ChangeNotifier {
   }
 
   Future<void> saveDevice(String devicePin, PosConfigInfo c) async {
-    pin = devicePin;
+    pin = _pendingToken.isNotEmpty ? _pendingToken : devicePin;
     configId = c.id;
     configName = c.name;
     cashiersOn = c.cashiersOn;

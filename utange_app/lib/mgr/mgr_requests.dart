@@ -111,7 +111,7 @@ class _MgrRequestsState extends State<MgrRequests> {
           Expanded(child: Text(r.name, style: h(15))),
           Pill(r.stateLabel, fg: fg, bg: bg),
         ]),
-        subtitle: Text('${r.date}\n${r.by.isEmpty ? r.config : '${r.by} · ${r.config}'} · ${r.items} items'
+        subtitle: Text('${r.pointLabel.isEmpty ? '' : 'For ${r.pointLabel} · '}${r.date}\n${r.by.isEmpty ? r.config : '${r.by} · ${r.config}'} · ${r.items} items'
             '${r.note.isEmpty ? '' : '\n“${r.note}”'}'),
         trailing: const Icon(Icons.chevron_right_rounded),
         onTap: () async {
@@ -172,6 +172,43 @@ class _RequestDetailState extends State<RequestDetail> {
 
   Future<void> _act(String action) async {
     final r = _r!;
+    if (action == 'approve') {
+      final short = <String>[];
+      var any = false;
+      for (var n = 0; n < r.lines.length; n++) {
+        final want = double.tryParse(_qty[n]?.text.trim() ?? '') ?? dd(r.lines[n]['qty']);
+        final have = dd(r.lines[n]['store_now']);
+        if (want > 0 && have > 0) any = true;
+        if (want > have + 0.0001) short.add('• ${ss(r.lines[n]['name'])}: store has ${qty(have < 0 ? 0 : have)}, asked ${qty(want)}');
+      }
+      if (!any) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.inventory_2_outlined, color: C.red, size: 36),
+            title: const Text('Nothing to issue'),
+            content: Text('The main store has none of these items.\n\n${short.join('\n')}\n\n'
+                'Receive the stock first (Buy tab → Received now), then approve.'),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+          ),
+        );
+        return;
+      }
+      if (short.isNotEmpty) {
+        final go = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Not enough in the main store'),
+            content: Text('${short.join('\n')}\n\nApprove and move only what the store has?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Move what is there')),
+            ],
+          ),
+        );
+        if (go != true) return;
+      }
+    }
     if (action == 'reject') {
       final ok = await showDialog<bool>(
         context: context,
@@ -231,7 +268,10 @@ class _RequestDetailState extends State<RequestDetail> {
         padding: const EdgeInsets.all(14),
         decoration: card(),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [Expanded(child: Text(r.by.isEmpty ? r.config : r.by, style: h(16))), Pill(r.stateLabel, fg: fg, bg: bg)]),
+          Row(children: [
+            Expanded(child: Text('${r.pointLabel.isEmpty ? '' : 'For ${r.pointLabel} · '}${r.by.isEmpty ? r.config : r.by}', style: h(16))),
+            Pill(r.stateLabel, fg: fg, bg: bg),
+          ]),
           Text('${r.date} · ${r.from} → ${r.to}', style: const TextStyle(color: C.muted)),
           if (r.note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text('“${r.note}”')),
           if (shift != null)
@@ -245,12 +285,12 @@ class _RequestDetailState extends State<RequestDetail> {
         ]),
       ),
       const SizedBox(height: 12),
-      for (var n = 0; n < r.lines.length; n++) _line(n, r.lines[n], waiting),
+      for (var n = 0; n < r.lines.length; n++) _line(n, r.lines[n], waiting, r.pointLabel),
       if (waiting) ...[
         const SizedBox(height: 8),
         TextField(controller: _note, decoration: const InputDecoration(labelText: 'Manager note (optional)', prefixIcon: Icon(Icons.notes_rounded))),
         const SizedBox(height: 16),
-        primaryButton('Approve and send to store', () => _act('approve'), icon: Icons.check_circle_rounded, busy: _busy),
+        primaryButton('Approve and move stock', () => _act('approve'), icon: Icons.check_circle_rounded, busy: _busy),
         const SizedBox(height: 10),
         SizedBox(
           height: 50,
@@ -265,7 +305,7 @@ class _RequestDetailState extends State<RequestDetail> {
     ]);
   }
 
-  Widget _line(int n, Map<String, dynamic> l, bool editable) {
+  Widget _line(int n, Map<String, dynamic> l, bool editable, String place) {
     Widget cell(String label, String value, {Color? color}) => Expanded(
           child: Column(children: [
             Text(value, style: h(14, color: color ?? C.ink)),
@@ -305,7 +345,7 @@ class _RequestDetailState extends State<RequestDetail> {
         Row(children: [
           cell('Shift\nopening', opening == null ? '—' : qty(opening)),
           cell('Sold this\nshift', sold == null ? '—' : qty(sold)),
-          cell('In bar\nnow', qty(dd(l['bar_now'])), color: dd(l['bar_now']) <= 0 ? C.red : null),
+          cell('${place.isEmpty ? 'There' : place}\nnow', qty(dd(l['bar_now'])), color: dd(l['bar_now']) <= 0 ? C.red : null),
           cell('In store\nnow', qty(dd(l['store_now'])), color: dd(l['store_now']) < dd(l['qty']) ? C.amber : null),
           cell('Sold\n7 days', qty(dd(l['sold_7_days']))),
         ]),

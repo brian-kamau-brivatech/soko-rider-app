@@ -140,6 +140,7 @@ class PosProduct {
   final List<int> categIds;
   final double? qty;
   final String image;
+  final String point; // bar | kitchen | ''
   PosProduct.fromJson(Map<String, dynamic> j)
       : id = ii(j['id']),
         name = ss(j['name']),
@@ -148,6 +149,7 @@ class PosProduct {
         barcode = ss(j['barcode']),
         categIds = ((j['categ_ids'] as List?) ?? const []).map(ii).toList(),
         qty = dn(j['qty']),
+        point = ss(j['point']),
         image = Api.url(ss(j['image']));
 }
 
@@ -180,6 +182,11 @@ class PosSetup {
   final String shopAddress;
   final String header;
   final String footer;
+  final bool blockZero;
+  final String receiptPrinterIp;
+  final String receiptPrinterVia; // odoo (pos_escpos) | direct | ''
+  final List<KitchenPrinter> kitchenPrinters;
+  final List<Map<String, dynamic>> points;
   PosSetup.fromJson(Map<String, dynamic> j)
       : configName = ss((j['config'] ?? const {})['name']),
         sessionOpen = j['session'] is Map,
@@ -194,7 +201,27 @@ class PosSetup {
         shopVat = ss((j['company'] ?? const {})['vat']),
         shopAddress = ss((j['company'] ?? const {})['address']),
         header = ss(j['receipt_header']),
-        footer = ss(j['receipt_footer']);
+        footer = ss(j['receipt_footer']),
+        blockZero = j['block_zero'] == true,
+        receiptPrinterIp = ss(j['receipt_printer_ip']),
+        receiptPrinterVia = ss(j['receipt_printer_via']),
+        kitchenPrinters = ll(j['kitchen_printers']).map(KitchenPrinter.fromJson).toList(),
+        points = ll(j['points']);
+}
+
+/// An Odoo preparation (kitchen / bar) printer with a network IP.
+class KitchenPrinter {
+  final int id;
+  final String name;
+  final String ip;
+  final String via;
+  final List<int> categIds;
+  KitchenPrinter.fromJson(Map<String, dynamic> j)
+      : id = ii(j['id']),
+        name = ss(j['name']),
+        ip = ss(j['ip']),
+        via = ss(j['via']),
+        categIds = ((j['categ_ids'] as List?) ?? const []).map(ii).toList();
 }
 
 class SaleLine {
@@ -364,6 +391,7 @@ class CountItem {
   final double sentOut;
   final double sold;
   final double expected; // closing: what should be there
+  final String point; // Bar | Kitchen | POS
   CountItem.fromJson(Map<String, dynamic> j)
       : productId = ii(j['product_id']),
         name = ss(j['name']),
@@ -376,7 +404,8 @@ class CountItem {
         received = dd(j['received']),
         sentOut = dd(j['sent_out']),
         sold = dd(j['sold']),
-        expected = dd(j['expected']);
+        expected = dd(j['expected']),
+        point = ss(j['point']);
 }
 
 class Requisition {
@@ -389,6 +418,7 @@ class Requisition {
   final String from;
   final String to;
   final String config;
+  final String pointLabel;
   final String note;
   final String managerNote;
   final String transfer;
@@ -406,6 +436,7 @@ class Requisition {
         from = ss(j['from']),
         to = ss(j['to']),
         config = ss(j['config']),
+        pointLabel = ss(j['point_label']),
         note = ss(j['note']).split('\n[').first,
         managerNote = ss(j['manager_note']),
         transfer = ss(j['transfer']),

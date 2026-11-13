@@ -44,8 +44,10 @@ class MoreScreen extends StatelessWidget {
             ),
           ),
         item(Icons.lock_clock_rounded, 'Shift', 'Open or close: stock count and cash count', const ShiftScreen()),
-        item(Icons.inventory_2_rounded, 'Stock', 'What is in the bar and in the store', const StockScreen()),
+        item(Icons.inventory_2_rounded, 'Stock', 'Bar, kitchen and main store', const StockScreen()),
         item(Icons.settings_rounded, 'Settings', 'Printer and this handheld', const SettingsScreen()),
+        const SizedBox(height: 16),
+        const Center(child: Text('Utange POS · by BRV POS · BRV Integrated Systems', style: TextStyle(color: C.muted, fontSize: 12))),
       ]),
     );
   }
@@ -100,7 +102,7 @@ class _StockScreenState extends State<StockScreen> {
           error: _error,
           onRetry: _load,
           child: () => ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
-            Text(_store.isEmpty ? _bar : 'Bar: $_bar · Store: $_store', style: const TextStyle(color: C.muted)),
+            Text(_store.isEmpty ? _bar : '$_bar · Main store: $_store', style: const TextStyle(color: C.muted)),
             const SizedBox(height: 8),
             TextField(
               onChanged: (v) => setState(() => _q = v),
@@ -123,7 +125,7 @@ class _StockScreenState extends State<StockScreen> {
                 child: Row(children: [
                   Expanded(child: Text(ss(p['name']), style: h(14, w: FontWeight.w700))),
                   Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Text('Bar ${qty(dd(p['bar']))}', style: h(14.5, color: dd(p['bar']) <= 0 ? C.red : C.ink)),
+                    Text('${ss(p['point_label'])} ${qty(dd(p['bar']))}', style: h(14.5, color: dd(p['bar']) <= 0 ? C.red : C.ink)),
                     if (p['store'] != null) Text('Store ${qty(dd(p['store']))}', style: const TextStyle(color: C.muted, fontSize: 12.5)),
                   ]),
                 ]),
@@ -154,8 +156,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadPrinter() async {
     final id = await Receipt.printerChoice();
-    var label = id == 'auto' ? 'Automatic' : id == 'dialog' ? 'Android print screen (preview)' : id;
-    if (id != 'auto' && id != 'dialog') {
+    var label = id == 'auto'
+        ? 'Automatic (Odoo bill printer if set, else this handheld)'
+        : id == 'dialog'
+            ? 'Android print screen (preview)'
+            : id.startsWith('odoo:') || id.startsWith('net:')
+                ? 'Odoo bill printer (${id.substring(id.indexOf(':') + 1)})'
+                : id;
+    if (id != 'auto' && id != 'dialog' && !id.startsWith('net:') && !id.startsWith('odoo:')) {
       final info = await Receipt.printerInfo();
       for (final p in (info['printers'] as List?) ?? const []) {
         if (p is Map && p['id'] == id) label = '${p['label']}';
@@ -171,11 +179,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _pickPrinter() async {
     final info = await Receipt.printerInfo();
+    String odooIp = '';
+    String odooVia = '';
+    try {
+      final st = await Api.call('/utange/pos/setup', Store.i.base());
+      odooIp = ss(st['receipt_printer_ip']);
+      odooVia = ss(st['receipt_printer_via']);
+    } catch (_) {}
     if (!mounted) return;
     final printers = ((info['printers'] as List?) ?? const []).whereType<Map>().toList();
     final options = <(String, String, String)>[
-      ('auto', 'Automatic', printers.isEmpty ? 'No direct printer found: uses the print screen' : 'First printer that prints without a preview'),
+      ('auto', 'Automatic', odooIp.isNotEmpty ? 'The Odoo bill printer ($odooIp); this handheld if it does not answer' : (printers.isEmpty ? 'No direct printer found: uses the print screen' : 'First printer that prints without a preview')),
       for (final p in printers) ('${p['id']}', '${p['label']}', '${p['package']}'),
+      if (odooIp.isNotEmpty && odooIp != '0.0.0.0')
+        (odooVia == 'odoo' ? 'odoo:$odooIp' : 'net:$odooIp', 'Odoo bill printer', 'Printer $odooIp, same as the Odoo POS'),
       ('dialog', 'Android print screen', 'Shows a preview first'),
     ];
     final picked = await showModalBottomSheet<String>(
@@ -229,12 +246,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Set up this handheld again?'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('For BRV: enter the device PIN to change the server or the Point of Sale.'),
-          TextField(controller: c, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Device PIN')),
+          const Text('Enter a POS manager PIN to choose the Point of Sale again.'),
+          TextField(controller: c, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'POS manager PIN')),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim() == Store.i.pin), child: const Text('Set up again')),
+          FilledButton(
+            onPressed: () async {
+              var good = false;
+              try {
+                await Api.call('/utange/pos/configs', {'pin': c.text.trim()});
+                good = true;
+              } catch (_) {}
+              if (ctx.mounted) Navigator.pop(ctx, good);
+            },
+            child: const Text('Set up again'),
+          ),
         ],
       ),
     );
@@ -242,7 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await Store.i.forgetDevice();
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } else if (ok == false && c.text.isNotEmpty && mounted) {
-      toast(context, 'Wrong device PIN.');
+      toast(context, 'Wrong PIN.');
     }
   }
 
@@ -269,6 +296,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: _testing ? null : _testPrint,
             ),
             ListTile(
+              leading: const Icon(Icons.soup_kitchen_rounded, color: C.navy),
+              title: const Text('Test kitchen / bar order printers'),
+              subtitle: const Text('The preparation printers set in Odoo POS'),
+              onTap: () async {
+                try {
+                  final st = PosSetup.fromJson(await Api.call('/utange/pos/setup', Store.i.base()));
+                  if (st.kitchenPrinters.isEmpty) {
+                    if (context.mounted) toast(context, 'No kitchen printers with an IP address in Odoo (POS settings > Preparation printers).');
+                    return;
+                  }
+                  final test = Sale.fromJson({'id': 0, 'name': 'TEST', 'cashier': Store.i.cashierName});
+                  final failed = await Receipt.printKitchen(test, st, [
+                    for (final pr in st.kitchenPrinters) (1.0, 'Test for ${pr.name}', pr.categIds.take(1).toList()),
+                  ]);
+                  if (context.mounted) {
+                    toast(context, failed.isEmpty ? 'Sent to ${st.kitchenPrinters.map((p) => p.name).join(', ')}.' : 'Did not answer: ${failed.join(', ')}');
+                  }
+                } on ApiError catch (e) {
+                  if (context.mounted) toast(context, e.message);
+                }
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.image_outlined, color: C.navy),
               title: const Text('Reload logo from Odoo'),
               subtitle: const Text('Printed at the top of receipts'),
@@ -283,7 +333,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Container(
           decoration: card(),
           child: Column(children: [
-            ListTile(leading: const Icon(Icons.link_rounded), title: Text(s.server), subtitle: Text('Database ${s.db}')),
             ListTile(leading: const Icon(Icons.storefront_rounded), title: Text(s.configName), subtitle: Text(s.companyName)),
             ListTile(
               leading: const Icon(Icons.restart_alt_rounded, color: C.red),

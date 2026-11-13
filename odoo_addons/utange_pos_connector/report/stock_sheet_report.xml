@@ -29,6 +29,7 @@
                             <thead>
                                 <tr>
                                     <th>Item</th>
+                                    <th>Stock</th>
                                     <th class="text-end">Opening</th>
                                     <th class="text-end">In</th>
                                     <th class="text-end">Out</th>
@@ -44,6 +45,7 @@
                             <tbody>
                                 <tr t-foreach="o.line_ids" t-as="l">
                                     <td><t t-esc="l.product_id.display_name"/></td>
+                                    <td><t t-esc="l.point"/></td>
                                     <td class="text-end"><t t-esc="'%g' % l.counted_open"/></td>
                                     <td class="text-end"><t t-esc="'%g' % l.received if l.received else ''"/></td>
                                     <td class="text-end"><t t-esc="'%g' % l.sent_out if l.sent_out else ''"/></td>
@@ -59,11 +61,11 @@
                             </tbody>
                             <tfoot>
                                 <tr>
-                                    <td colspan="10"><strong>Total sales</strong></td>
+                                    <td colspan="11"><strong>Total sales</strong></td>
                                     <td class="text-end"><strong><t t-esc="'{:,.0f}'.format(o.amount_total)"/></strong></td>
                                 </tr>
                                 <tr t-if="o.close_date">
-                                    <td colspan="10"><strong>Closing variance at selling price</strong></td>
+                                    <td colspan="11"><strong>Closing variance at selling price</strong></td>
                                     <td class="text-end"><strong><t t-esc="'{:,.0f}'.format(o.close_diff_value)"/></strong></td>
                                 </tr>
                             </tfoot>

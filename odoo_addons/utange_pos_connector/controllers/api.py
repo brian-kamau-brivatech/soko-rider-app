@@ -41,7 +41,22 @@ class UtangePosApi(http.Controller):
     # ------------------------------------------------------------------
     # Device and POS
     # ------------------------------------------------------------------
+    def _device_secret(self):
+        P = request.env['ir.config_parameter'].sudo()
+        s = P.get_param('utange_pos.device_secret')
+        if not s:
+            s = uuid.uuid4().hex
+            P.set_param('utange_pos.device_secret', s)
+        return s
+
+    def _device_token(self):
+        return 'D.' + _hmac(request.env(su=True), 'utange-pos-device', self._device_secret())
+
     def _ok(self, pin):
+        pin = str(pin or '').strip()
+        if pin.startswith('D.'):
+            # A handheld registered with a POS manager's PIN (change utange_pos.device_secret to revoke all).
+            return (True, '') if consteq(pin, self._device_token()) else (False, 'This handheld must be set up again.')
         P = request.env['ir.config_parameter'].sudo()
         expected = (P.get_param(PARAM_PIN) or '').strip()
         if not expected:
@@ -148,14 +163,39 @@ class UtangePosApi(http.Controller):
         except Exception:
             pass
 
+    def _manager_pin_ok(self, pin):
+        """True when pin is the employee PIN of a POS manager of any active POS."""
+        pin = str(pin or '').strip()
+        if len(pin) < 3:
+            return False
+        for config in request.env['pos.config'].sudo().search([('active', '=', True)]):
+            if not self._hr_on(config):
+                continue
+            for emp, role in self._cashier_list(config):
+                if role == 'manager' and emp.sudo().pin and consteq(pin, emp.sudo().pin):
+                    return True
+        return False
+
     @http.route('/utange/pos/configs', type='json', auth='public', methods=['POST'], csrf=False)
     def configs(self, pin=None, **kw):
+        """Set-up: the BRV device PIN or a POS manager's employee PIN. Returns a device token to keep."""
+        token = None
         ok, msg = self._ok(pin)
+        if not ok and not str(pin or '').startswith('D.'):
+            P = request.env['ir.config_parameter'].sudo()
+            fails = int(P.get_param(PARAM_FAILS) or 0)
+            if fails < 20 and self._manager_pin_ok(pin):
+                ok, token = True, self._device_token()
+                P.set_param(PARAM_FAILS, '0')
+            elif str(pin or '').strip():
+                msg = 'Wrong PIN. Use a POS manager\'s employee PIN (or the BRV device PIN).'
         if not ok:
             return {'ok': False, 'error': msg, 'device': True}
+        if token is None:
+            token = self._device_token()
         company = request.env.company
         configs = request.env['pos.config'].sudo().search([('active', '=', True)], order='name')
-        return {'ok': True,
+        return {'ok': True, 'token': token,
                 'company': {'id': company.id, 'name': company.name},
                 'configs': [{'id': c.id, 'name': c.name, 'cashiers_on': self._hr_on(c),
                              'open': bool(self._open_session(c))} for c in configs]}
@@ -206,10 +246,8 @@ class UtangePosApi(http.Controller):
         if bad:
             return bad
         session = self._open_session(config)
-        location = config._utange_location()
         products = config._utange_products()
-        on_hand = {p.id: p.qty_available for p in products.filtered(lambda p: p.type == 'product').with_context(location=location.id)} \
-            if location else {}
+        on_hand = config._utange_available(products, session)
         cats, items = {}, []
         for p in products:
             for c in p.pos_categ_ids:
@@ -219,6 +257,7 @@ class UtangePosApi(http.Controller):
                 'id': p.id, 'name': p.display_name, 'price': incl, 'uom': p.uom_id.name or '',
                 'barcode': p.barcode or '', 'categ_ids': p.pos_categ_ids.ids,
                 'qty': on_hand.get(p.id) if p.type == 'product' else None,
+                'point': p.product_tmpl_id._utange_point() or '',
                 'image': '/web/image/product.product/%d/image_128' % p.id,
             })
         company = request.env.company
@@ -236,7 +275,41 @@ class UtangePosApi(http.Controller):
                         'vat': company.vat or '', 'address': ', '.join(x for x in (company.street, company.city) if x)},
             'receipt_header': (config.receipt_header or '') if 'receipt_header' in config._fields else '',
             'receipt_footer': (config.receipt_footer or '') if 'receipt_footer' in config._fields else '',
+            'block_zero': bool(config.utange_block_zero),
+            **self._receipt_printer(config),
+            'kitchen_printers': self._kitchen_printers(config),
+            'points': [{'point': pt, 'label': label, 'location': loc.display_name} for pt, label, loc in config._utange_points()],
         }
+
+    def _kitchen_printers(self, config):
+        """Odoo order printers (Point of Sale > Preparation printers) with a network IP: kitchen / bar tickets."""
+        out = []
+        if not getattr(config, 'is_order_printer', False):
+            return out
+        for pr in config.printer_ids:
+            via = 'direct'
+            ip = ''
+            if getattr(pr, 'printer_type', '') == 'escpos_printer':
+                ip, via = (getattr(pr, 'escpos_printer_ip', '') or '').strip(), 'odoo'  # pos_escpos: Odoo sends it
+            if not ip or ip == '0.0.0.0':
+                ip = (getattr(pr, 'epson_printer_ip', '') or getattr(pr, 'proxy_ip', '') or '').strip()
+                via = 'direct'
+            if not ip or ip == '0.0.0.0':
+                continue
+            cats = request.env['pos.category'].sudo().search([('id', 'child_of', pr.product_categories_ids.ids)]).ids \
+                if pr.product_categories_ids else []
+            out.append({'id': pr.id, 'name': pr.name, 'ip': ip, 'via': via, 'categ_ids': cats})
+        return out
+
+    def _receipt_printer(self, config):
+        """The bill printer set on the POS: pos_escpos (sent through Odoo) or an Epson IP."""
+        ip = (getattr(config, 'escpos_printer_ip', '') or '').strip() if getattr(config, 'escpos_print', False) else ''
+        if ip and ip != '0.0.0.0':
+            return {'receipt_printer_ip': ip, 'receipt_printer_via': 'odoo'}
+        ip = (getattr(config, 'epson_printer_ip', '') or '').strip()
+        if ip and ip != '0.0.0.0':
+            return {'receipt_printer_ip': ip, 'receipt_printer_via': 'direct'}
+        return {'receipt_printer_ip': '', 'receipt_printer_via': ''}
 
     def _pay_later(self, m):
         return bool(getattr(m, 'split_transactions', False) or getattr(m, 'type', '') == 'pay_later')
@@ -301,6 +374,20 @@ class UtangePosApi(http.Controller):
             }])
         if not ui_lines:
             return {'ok': False, 'error': 'Add at least one item.'}
+        if config.utange_block_zero:
+            wanted = {}
+            for ln in ui_lines:
+                wanted[ln[2]['product_id']] = wanted.get(ln[2]['product_id'], 0.0) + ln[2]['qty']
+            prods = Product.browse(list(wanted)).filtered(lambda p: p.type == 'product')
+            avail = config._utange_available(prods, session)
+            short = []
+            for p in prods:
+                if wanted[p.id] > 0 and avail.get(p.id, 0.0) + 0.0001 < wanted[p.id]:
+                    short.append('%s (%s has %g)' % (p.display_name, config._utange_point_label(p.product_tmpl_id._utange_point()),
+                                                    max(avail.get(p.id, 0.0), 0)))
+            if short:
+                return {'ok': False, 'error': 'Not enough stock: %s. Make a requisition to the main store.' % ', '.join(short[:5]),
+                        'no_stock': True}
         total = round(total, 2)
         methods = {m.id: m for m in config.payment_method_ids}
         ui_payments, paid, change = [], 0.0, 0.0
@@ -450,15 +537,19 @@ class UtangePosApi(http.Controller):
         config, _e, _r, bad = self._guard(pin, config_id, need_cashier=False)
         if bad:
             return bad
-        bar = config._utange_location()
         store = config._utange_store_location()
         products = config._utange_products(storable=True)
-        in_bar = {p.id: p.qty_available for p in products.with_context(location=bar.id)} if bar else {}
-        in_store = {p.id: p.qty_available for p in products.with_context(location=store.id)} \
-            if store and store != bar else {}
-        return {'ok': True, 'bar': bar.display_name if bar else '', 'store': store.display_name if store and store != bar else '',
+        here = request.env['utange.stock.sheet'].sudo()._on_hand_for(config, products)
+        in_store = {p.id: p.qty_available for p in products.with_context(location=store.id)} if store else {}
+        points = config._utange_points()
+        return {'ok': True, 'store': store.display_name if store else '',
+                'bar': ', '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in points),
+                'points': [{'point': pt, 'label': label, 'location': loc.display_name} for pt, label, loc in points],
                 'products': [{'id': p.id, 'name': p.display_name, 'uom': p.uom_id.name or '',
-                              'bar': in_bar.get(p.id, 0.0), 'store': in_store.get(p.id) if in_store else None}
+                              'point': p.product_tmpl_id._utange_point() or 'main',
+                              'point_label': config._utange_point_label(p.product_tmpl_id._utange_point()),
+                              'bar': here.get(p.id, (None, 0.0))[1],
+                              'store': in_store.get(p.id) if store and store != here.get(p.id, (store, 0))[0] else None}
                              for p in products]}
 
     # ------------------------------------------------------------------
@@ -541,18 +632,24 @@ class UtangePosApi(http.Controller):
             sheet._refresh_movements()
             items = [{'product_id': l.product_id.id, 'name': l.product_id.display_name, 'uom': l.uom_id.name or '',
                       'opening': l.counted_open, 'received': l.received, 'sent_out': l.sent_out, 'sold': l.sold,
-                      'expected': l.expected_close, 'price': l.price,
+                      'expected': l.expected_close, 'price': l.price, 'point': l.point or '',
                       'categ': l.product_id.pos_categ_ids[:1].name or ''} for l in sheet.line_ids]
-            return {'ok': True, 'phase': 'close', 'sheet': sheet.name, 'location': location.display_name, 'items': items}
-        products = config._utange_sheet_products()
-        on_hand = Sheet._on_hand(products, location)
+            return {'ok': True, 'phase': 'close', 'sheet': sheet.name, 'location': self._points_text(config), 'items': items}
+        order = {'bar': 0, 'kitchen': 1}
+        products = config._utange_sheet_products().sorted(
+            lambda p: (order.get(p.product_tmpl_id._utange_point(), 2), p.display_name))
+        on_hand = Sheet._on_hand_for(config, products)
         last = Sheet.search([('config_id', '=', config.id), ('state', '=', 'closed')], order='close_date desc, id desc', limit=1)
         last_count = {l.product_id.id: l.counted_close for l in last.line_ids if l.closed} if last else {}
         items = [{'product_id': p.id, 'name': p.display_name, 'uom': p.uom_id.name or '',
-                  'system': on_hand.get(p.id, 0.0), 'last_close': last_count.get(p.id),
+                  'system': on_hand.get(p.id, (None, 0.0))[1], 'last_close': last_count.get(p.id),
+                  'point': config._utange_point_label(p.product_tmpl_id._utange_point()),
                   'price': Sheet._price_incl(p, config), 'categ': p.pos_categ_ids[:1].name or ''} for p in products]
-        return {'ok': True, 'phase': 'open', 'location': location.display_name, 'items': items,
+        return {'ok': True, 'phase': 'open', 'location': self._points_text(config), 'items': items,
                 'last_sheet': last.name if last else ''}
+
+    def _points_text(self, config):
+        return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
 
     def _counts(self, counts):
         out = {}
@@ -704,6 +801,7 @@ class UtangePosApi(http.Controller):
             'id': r.id, 'name': r.name, 'date': self._local(r, r.date), 'state': r.state,
             'state_label': dict(r._fields['state'].selection).get(r.state, r.state),
             'by': r.employee_id.name or '', 'from': r.location_src_id.display_name, 'to': r.location_dest_id.display_name,
+            'point': r.point, 'point_label': dict(r._fields['point'].selection).get(r.point, ''),
             'note': r.note or '', 'manager_note': r.manager_note or '', 'transfer': r.picking_id.name or '',
             'lines': [{'name': l.product_id.display_name, 'qty': l.qty, 'issued': l.qty_issued, 'uom': l.uom_id.name or ''}
                       for l in r.line_ids],
@@ -718,14 +816,18 @@ class UtangePosApi(http.Controller):
         return {'ok': True, 'requisitions': [self._req(r) for r in reqs]}
 
     @http.route('/utange/pos/requisition_create', type='json', auth='public', methods=['POST'], csrf=False)
-    def requisition_create(self, pin=None, config_id=None, cashier=None, lines=None, note=None, uid=None, **kw):
+    def requisition_create(self, pin=None, config_id=None, cashier=None, lines=None, note=None, uid=None, point=None, **kw):
         config, emp, _role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
-        bar = config._utange_location()
+        point = point if point in ('bar', 'kitchen') else 'main'
+        bar = config._utange_point_location(point)
         store = config._utange_store_location()
         if not bar or not store:
             return {'ok': False, 'error': 'Stock locations are not set for this POS. Ask the manager (Handheld settings).'}
+        if bar == store:
+            return {'ok': False, 'error': 'The %s and the main store are the same location. Set the Bar / Kitchen / Main store '
+                                          'locations in Point of Sale > Handheld > Handheld settings.' % config._utange_point_label(point)}
         Req = request.env['utange.requisition'].sudo()
         uid = str(uid or '').strip()[:60]
         if uid:
@@ -752,6 +854,7 @@ class UtangePosApi(http.Controller):
             'employee_id': emp.id if emp else False,
             'location_src_id': store.id,
             'location_dest_id': bar.id,
+            'point': point,
             'note': ((note or '').strip()[:500] + ('\n[%s]' % uid if uid else '')).strip(),
             'line_ids': [(0, 0, {'product_id': p.id, 'qty': q, 'note': n, 'bar_qty': in_bar.get(p.id, 0.0),
                                  'store_qty': in_store.get(p.id, 0.0)}) for p, q, n in vals],

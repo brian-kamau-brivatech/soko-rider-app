@@ -18,6 +18,7 @@ class _CountScreenState extends State<CountScreen> {
   String _location = '';
   String _q = '';
   bool _onlyLeft = false;
+  String _point = '';
   final Map<int, TextEditingController> _c = {};
 
   bool get _open => widget.phase == 'open';
@@ -112,6 +113,7 @@ class _CountScreenState extends State<CountScreen> {
     final shown = all
         .where((i) => q.isEmpty || i.name.toLowerCase().contains(q))
         .where((i) => !_onlyLeft || _val(i) == null)
+        .where((i) => _point.isEmpty || i.point == _point)
         .toList();
     final complete = all.isNotEmpty && _done == all.length;
     return Scaffold(
@@ -158,6 +160,16 @@ class _CountScreenState extends State<CountScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (all.map((i) => i.point).toSet().length > 1)
+                  PopupMenuButton<String>(
+                    tooltip: 'Bar / Kitchen',
+                    icon: Icon(Icons.filter_list_rounded, color: _point.isEmpty ? C.muted : C.green),
+                    onSelected: (v) => setState(() => _point = v),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: '', child: Text('All')),
+                      for (final pt in all.map((i) => i.point).toSet()) PopupMenuItem(value: pt, child: Text(pt)),
+                    ],
+                  ),
                 FilterChip(
                   label: const Text('Not counted'),
                   selected: _onlyLeft,
@@ -227,10 +239,11 @@ class _CountScreenState extends State<CountScreen> {
             Text(i.name, style: h(14, w: FontWeight.w700)),
             const SizedBox(height: 2),
             Text(
-              _open
+              (i.point.isEmpty ? '' : '${i.point} · ') +
+              (_open
                   ? 'System ${qty(i.system)}${i.lastClose != null ? ' · last close ${qty(i.lastClose!)}' : ''}'
                   : 'Open ${qty(i.opening)}${i.received > 0 ? ' + in ${qty(i.received)}' : ''}'
-                      '${i.sentOut > 0 ? ' − out ${qty(i.sentOut)}' : ''} − sold ${qty(i.sold)} = expected ${qty(i.expected)}',
+                      '${i.sentOut > 0 ? ' − out ${qty(i.sentOut)}' : ''} − sold ${qty(i.sold)} = expected ${qty(i.expected)}'),
               style: const TextStyle(color: C.muted, fontSize: 12.5),
             ),
             if (bad)

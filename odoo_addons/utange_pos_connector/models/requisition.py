@@ -15,8 +15,10 @@ class UtangeRequisition(models.Model):
     config_id = fields.Many2one('pos.config', 'Point of Sale', required=True, index=True)
     session_id = fields.Many2one('pos.session', 'Session', readonly=True)
     employee_id = fields.Many2one('hr.employee', 'Requested by', readonly=True)
-    location_src_id = fields.Many2one('stock.location', 'From (store)', required=True, domain=[('usage', '=', 'internal')])
-    location_dest_id = fields.Many2one('stock.location', 'To (bar)', required=True, domain=[('usage', '=', 'internal')])
+    point = fields.Selection([('bar', 'Bar'), ('kitchen', 'Kitchen'), ('main', 'POS')], string='For', default='bar',
+                             required=True, tracking=True)
+    location_src_id = fields.Many2one('stock.location', 'From (main store)', required=True, domain=[('usage', '=', 'internal')])
+    location_dest_id = fields.Many2one('stock.location', 'To', required=True, domain=[('usage', '=', 'internal')])
     company_id = fields.Many2one('res.company', default=lambda s: s.env.company, readonly=True)
     state = fields.Selection([
         ('submitted', 'Waiting approval'),
@@ -104,8 +106,33 @@ class UtangeRequisition(models.Model):
             r.write({'state': 'approved', 'picking_id': picking.id,
                      'approved_by_id': self.env.user.id, 'approved_date': fields.Datetime.now()})
             r.activity_ids.action_feedback(feedback='Approved')
-            r.message_post(body='Approved. Transfer %s created for the store.' % picking.name)
+            if r.config_id.utange_auto_issue:
+                r._issue_now(picking)
+            else:
+                r.message_post(body='Approved. Transfer %s created for the store.' % picking.name)
         return True
+
+    def _issue_now(self, picking):
+        """Moves the stock at once: as much of each item as the main store has."""
+        self.ensure_one()
+        picking = picking.sudo()
+        short = []
+        for m in picking.move_ids:
+            have = m.product_id.with_context(location=picking.location_id.id).qty_available
+            give = max(0.0, min(m.product_uom_qty, have))
+            if give < m.product_uom_qty:
+                short.append('%s: store has %g, asked %g' % (m.product_id.display_name, max(have, 0), m.product_uom_qty))
+            m.quantity = give
+            m.picked = True
+        if not any(m.quantity > 0 for m in picking.move_ids):
+            raise UserError('The main store (%s) has none of these items. Receive stock first (purchase), '
+                            'or move it in Inventory.' % picking.location_id.display_name)
+        picking.move_ids.filtered(lambda m: m.quantity <= 0)._action_cancel()
+        picking.with_context(skip_backorder=True, picking_ids_not_to_backorder=picking.ids,
+                             skip_sms=True, skip_immediate=True).button_validate()
+        self.message_post(body='Approved and issued: %s moved %s → %s.%s' % (
+            picking.name, picking.location_id.display_name, picking.location_dest_id.display_name,
+            ('<br/>Short: ' + '; '.join(short)) if short else ''))
 
     def action_reject(self):
         for r in self:

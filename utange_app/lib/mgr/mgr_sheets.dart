@@ -251,6 +251,7 @@ class _SheetDetailState extends State<SheetDetail> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(child: Text(ss(l['name']), style: h(14, w: FontWeight.w700))),
+          if (ss(l['point']).isNotEmpty) Padding(padding: const EdgeInsets.only(right: 8), child: Pill(ss(l['point']), fg: C.navy, bg: C.blueLight)),
           Text(ksh(dd(l['amount'])), style: h(13.5, color: C.green)),
         ]),
         if (openDiff.abs() > 0.0001)

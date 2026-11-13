@@ -17,6 +17,7 @@ class _MgrLoginState extends State<MgrLogin> {
   final _pass = TextEditingController();
   bool _busy = false;
   bool _showServer = Store.i.server.isEmpty;
+  int _taps = 0;
   String? _error;
 
   @override
@@ -58,9 +59,20 @@ class _MgrLoginState extends State<MgrLogin> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 440),
               child: Column(children: [
-                const Icon(Icons.insights_rounded, color: C.gold, size: 56),
+                GestureDetector(
+                  onTap: () {
+                    _taps++;
+                    if (_taps >= 5) setState(() => _showServer = true);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+                    child: Image.asset('assets/brv_logo.png', height: 110),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Text('Utange Manager', style: h(28, color: Colors.white)),
+                const Text('by BRV POS', style: TextStyle(color: C.gold, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
                 const Text('Requests, shifts and stock sheets.', style: TextStyle(color: Color(0xFFC9D3E0), fontSize: 15)),
                 const SizedBox(height: 24),
@@ -80,15 +92,7 @@ class _MgrLoginState extends State<MgrLogin> {
                         autocorrect: false,
                         decoration: const InputDecoration(labelText: 'Database', prefixIcon: Icon(Icons.storage_rounded)),
                       ),
-                    ] else
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => setState(() => _showServer = true),
-                          icon: const Icon(Icons.link_rounded, size: 18),
-                          label: Text(Store.i.server, overflow: TextOverflow.ellipsis),
-                        ),
-                      ),
+                    ],
                     TextField(
                       controller: _login,
                       keyboardType: TextInputType.emailAddress,

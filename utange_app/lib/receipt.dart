@@ -5,6 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
+import 'netprint.dart';
 import 'store.dart';
 
 /// Prints POS receipts on the handheld's built-in printer.
@@ -185,20 +186,117 @@ class Receipt {
     try {
       final png = await image(s, shop: shop, phone: phone, email: email, header: header, footer: footer, vat: vat, address: address);
       final choice = await printerChoice();
+      if (choice.startsWith('odoo:')) {
+        final ok = await NetPrinter.viaOdoo(choice.substring(5), png);
+        lastMethod = ok ? 'network' : 'net_failed';
+        return ok;
+      }
+      if (choice.startsWith('net:')) {
+        final ok = await NetPrinter.printPng(choice.substring(4), png);
+        lastMethod = ok ? 'network' : 'net_failed';
+        return ok;
+      }
       final how = await _ch.invokeMethod<String>('printImage', <String, dynamic>{
         'png': png,
         'name': 'Receipt ${s.name}',
         'printer': choice,
       });
       lastMethod = how ?? 'error';
-      return lastMethod != 'error' && lastMethod != 'bt_failed';
+      return lastMethod != 'error' && lastMethod != 'bt_failed' && lastMethod != 'net_failed';
     } catch (_) {
       lastMethod = 'error';
       return false;
     }
   }
 
-  static Future<bool> printSale(Sale s, PosSetup? st) => print(s,
+  /// Kitchen / bar order ticket (big print, no prices) for the Odoo preparation printers.
+  static Future<Uint8List> ticket({required String printer, required String order, required String cashier,
+      required List<(double, String)> lines, String note = ''}) async {
+    const pad = 8.0;
+    const inner = width - pad * 2;
+    final ops = <(double, void Function(Canvas, double))>[];
+    void gap(double h) => ops.add((h, (c, y) {}));
+    void center(String t, double size, {bool bold = false}) {
+      final p = _tp(t, size, bold: bold, align: TextAlign.center, max: inner);
+      ops.add((p.height, (c, y) => p.paint(c, Offset(pad + (inner - p.width) / 2, y))));
+    }
+    void left(String t, double size, {bool bold = false}) {
+      final p = _tp(t, size, bold: bold, max: inner);
+      ops.add((p.height, (c, y) => p.paint(c, Offset(pad, y))));
+    }
+    void dashes() => ops.add((14.0, (c, y) {
+          final paint = Paint()
+            ..color = const Color(0xFF000000)
+            ..strokeWidth = 2;
+          for (var x = pad; x < width - pad; x += 10) {
+            c.drawLine(Offset(x, y + 7), Offset(x + 5, y + 7), paint);
+          }
+        }));
+    center(printer.toUpperCase(), 24, bold: true);
+    center(order, 30, bold: true);
+    final now = DateTime.now();
+    center('${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} · $cashier', 20);
+    dashes();
+    for (final l in lines) {
+      left('${_q(l.$1)} x ${l.$2}', 30, bold: true);
+      gap(4);
+    }
+    if (note.isNotEmpty) {
+      dashes();
+      left(note, 22);
+    }
+    gap(40);
+    final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec, Rect.fromLTWH(0, 0, width, total));
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, total), Paint()..color = const Color(0xFFFFFFFF));
+    var y = 0.0;
+    for (final o in ops) {
+      o.$2(canvas, y);
+      y += o.$1;
+    }
+    final img = await rec.endRecording().toImage(width.toInt(), total.toInt());
+    return _blackAndWhite(img);
+  }
+
+  /// Sends order tickets to the Odoo kitchen / bar printers whose categories are in the sale.
+  /// Returns the names of printers that did not answer.
+  static Future<List<String>> printKitchen(Sale s, PosSetup st, List<(double, String, List<int>)> cart) async {
+    final failed = <String>[];
+    for (final pr in st.kitchenPrinters) {
+      final lines = <(double, String)>[
+        for (final c in cart)
+          if (pr.categIds.isEmpty || c.$3.any(pr.categIds.contains)) (c.$1, c.$2),
+      ];
+      if (lines.isEmpty) continue;
+      try {
+        final png = await ticket(printer: pr.name, order: s.name, cashier: s.cashier, lines: lines,
+            note: s.customer.isEmpty ? '' : 'Customer: ${s.customer}');
+        if (!await NetPrinter.send(pr.ip, pr.via, png)) failed.add(pr.name);
+      } catch (_) {
+        failed.add(pr.name);
+      }
+    }
+    return failed;
+  }
+
+  /// The bill: on the Odoo bill printer when the POS has one (pos_escpos) and the handheld is on "Automatic",
+  /// otherwise on the printer chosen in Settings.
+  static Future<bool> printSale(Sale s, PosSetup? st) async {
+    final choice = await printerChoice();
+    if (choice == 'auto' && st != null && st.receiptPrinterIp.isNotEmpty) {
+      try {
+        final png = await image(s, shop: st.shopName, phone: st.shopPhone, email: st.shopEmail, header: st.header,
+            footer: st.footer, vat: st.shopVat, address: st.shopAddress);
+        final ok = await NetPrinter.send(st.receiptPrinterIp, st.receiptPrinterVia, png);
+        lastMethod = ok ? 'network' : 'net_failed';
+        if (ok) return true;
+      } catch (_) {}
+    }
+    return _printSaleHere(s, st);
+  }
+
+  static Future<bool> _printSaleHere(Sale s, PosSetup? st) => print(s,
       shop: st?.shopName ?? Store.i.companyName,
       phone: st?.shopPhone ?? '',
       email: st?.shopEmail ?? '',

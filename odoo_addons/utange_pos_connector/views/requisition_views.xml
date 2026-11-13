@@ -9,6 +9,7 @@
                 <field name="date"/>
                 <field name="config_id"/>
                 <field name="employee_id"/>
+                <field name="point"/>
                 <field name="location_src_id"/>
                 <field name="location_dest_id"/>
                 <field name="item_count" string="Items"/>
@@ -49,6 +50,7 @@
                             <field name="date"/>
                         </group>
                         <group>
+                            <field name="point" readonly="state != 'submitted'"/>
                             <field name="location_src_id" readonly="state != 'submitted'"/>
                             <field name="location_dest_id" readonly="state != 'submitted'"/>
                             <field name="approved_by_id"/>

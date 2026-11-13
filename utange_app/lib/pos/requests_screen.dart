@@ -121,7 +121,8 @@ class _RequestsScreenState extends State<RequestsScreen> {
           Expanded(child: Text(r.name, style: h(15))),
           Pill(r.stateLabel, fg: fg, bg: bg),
         ]),
-        Text('${r.date}${r.by.isEmpty ? '' : ' · ${r.by}'} · from ${r.from}', style: const TextStyle(color: C.muted, fontSize: 12.5)),
+        Text('${r.pointLabel.isEmpty ? '' : 'For ${r.pointLabel} · '}${r.date}${r.by.isEmpty ? '' : ' · ${r.by}'}',
+            style: const TextStyle(color: C.muted, fontSize: 12.5)),
         const SizedBox(height: 8),
         for (final l in r.lines)
           Padding(
@@ -152,7 +153,8 @@ class NewRequestScreen extends StatefulWidget {
 
 class _NewRequestScreenState extends State<NewRequestScreen> {
   List<Map<String, dynamic>>? _products;
-  String _bar = '';
+  List<Map<String, dynamic>> _points = const [];
+  String _point = 'bar';
   String _store = '';
   String? _error;
   String _q = '';
@@ -179,7 +181,8 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
       if (mounted) {
         setState(() {
           _products = ll(r['products']);
-          _bar = ss(r['bar']);
+          _points = ll(r['points']);
+          if (_points.isNotEmpty && !_points.any((p) => ss(p['point']) == _point)) _point = ss(_points.first['point']);
           _store = ss(r['store']);
           _error = null;
         });
@@ -198,7 +201,7 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
       builder: (ctx) => AlertDialog(
         title: Text(ss(p['name'])),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('In the bar: ${qty(dd(p['bar']))}${p['store'] != null ? ' · in the store: ${qty(dd(p['store']))}' : ''}',
+          Text('${ss(p['point_label'])}: ${qty(dd(p['bar']))}${p['store'] != null ? ' · main store: ${qty(dd(p['store']))}' : ''}',
               style: const TextStyle(color: C.muted)),
           TextField(
             controller: c,
@@ -228,6 +231,7 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
     try {
       final r = await Api.call('/utange/pos/requisition_create', Store.i.base({
         'uid': _uid,
+        'point': _point,
         'note': _note.text.trim(),
         'lines': [for (final e in _cart.entries) {'product_id': e.key, 'qty': e.value}],
       }));
@@ -245,7 +249,11 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
   @override
   Widget build(BuildContext context) {
     final q = _q.trim().toLowerCase();
-    final list = (_products ?? const <Map<String, dynamic>>[]).where((p) => q.isEmpty || ss(p['name']).toLowerCase().contains(q)).toList();
+    final list = (_products ?? const <Map<String, dynamic>>[])
+        .where((p) => _points.length < 2 || ss(p['point']) == _point || ss(p['point']) == 'main')
+        .where((p) => q.isEmpty || ss(p['name']).toLowerCase().contains(q))
+        .toList();
+    final here = _points.firstWhere((p) => ss(p['point']) == _point, orElse: () => const <String, dynamic>{});
     return Scaffold(
       appBar: bar('New request'),
       body: Loader(
@@ -253,7 +261,25 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
         error: _error,
         onRetry: _load,
         child: () => ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 120), children: [
-          Text('From $_store to $_bar', style: const TextStyle(color: C.muted)),
+          if (_points.length > 1) ...[
+            SegmentedButton<String>(
+              segments: [
+                for (final p in _points)
+                  ButtonSegment(
+                    value: ss(p['point']),
+                    label: Text(ss(p['label'])),
+                    icon: Icon(ss(p['point']) == 'kitchen' ? Icons.restaurant_rounded : Icons.local_bar_rounded),
+                  ),
+              ],
+              selected: {_point},
+              onSelectionChanged: _cart.isEmpty
+                  ? (v) => setState(() => _point = v.first)
+                  : (v) => toast(context, 'Send or clear this request first: one request is for one place.'),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text('From $_store to ${ss(here['location']).isEmpty ? ss(here['label']) : ss(here['location'])}',
+              style: const TextStyle(color: C.muted)),
           const SizedBox(height: 10),
           if (_cart.isNotEmpty)
             Container(
@@ -289,7 +315,8 @@ class _NewRequestScreenState extends State<NewRequestScreen> {
               ),
               child: ListTile(
                 title: Text(ss(p['name']), style: h(14, w: FontWeight.w700)),
-                subtitle: Text('Bar ${qty(dd(p['bar']))}${p['store'] != null ? ' · Store ${qty(dd(p['store']))}' : ''}'),
+                subtitle: Text('${ss(p['point_label']).isEmpty ? 'Here' : ss(p['point_label'])} ${qty(dd(p['bar']))}'
+                    '${p['store'] != null ? ' · Store ${qty(dd(p['store']))}' : ''}'),
                 trailing: _cart.containsKey(ii(p['id']))
                     ? Pill(qty(_cart[ii(p['id'])]!))
                     : const Icon(Icons.add_circle_outline_rounded, color: C.green),

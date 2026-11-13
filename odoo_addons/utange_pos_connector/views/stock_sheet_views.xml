@@ -67,6 +67,7 @@
                             <field name="line_ids">
                                 <tree decoration-danger="closed and close_diff &lt; 0" decoration-warning="open_diff != 0">
                                     <field name="product_id"/>
+                                    <field name="point" string="Stock" optional="show"/>
                                     <field name="uom_id" optional="hide"/>
                                     <field name="system_open" string="System" optional="show"/>
                                     <field name="counted_open" string="Opening"/>

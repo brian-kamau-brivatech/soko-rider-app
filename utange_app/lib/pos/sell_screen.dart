@@ -61,7 +61,19 @@ class _SellScreenState extends State<SellScreen> {
   double get _total => _cart.entries.fold<double>(0, (a, e) => a + (_p(e.key)?.price ?? 0) * e.value);
   double get _count => _cart.values.fold<double>(0, (a, q) => a + q);
 
+  /// No selling more than the bar / kitchen has (when Odoo says so).
+  bool _tooMuch(PosProduct p, double q) {
+    final s = _setup;
+    if (s == null || !s.blockZero || p.qty == null || q <= p.qty! + 0.0001) return false;
+    final where = p.point == 'bar' ? 'the bar' : p.point == 'kitchen' ? 'the kitchen' : 'stock';
+    toast(context, p.qty! <= 0
+        ? '${p.name}: none left in $where. Make a requisition (Requests tab).'
+        : '${p.name}: only ${_qtyText(p.qty!)} left in $where.');
+    return true;
+  }
+
   void _add(PosProduct p, [double by = 1]) {
+    if (by > 0 && _tooMuch(p, (_cart[p.id] ?? 0) + by)) return;
     setState(() {
       final q = (_cart[p.id] ?? 0) + by;
       if (q <= 0) {
@@ -91,6 +103,7 @@ class _SellScreenState extends State<SellScreen> {
       ),
     );
     if (v == null || v < 0) return;
+    if (_tooMuch(p, v)) return;
     setState(() {
       if (v == 0) {
         _cart.remove(p.id);

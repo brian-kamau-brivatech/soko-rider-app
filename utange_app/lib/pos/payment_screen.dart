@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../store.dart';
 import '../ui.dart';
+import '../receipt.dart';
 import 'receipt_screen.dart';
 
 class CartLine {
@@ -81,6 +82,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (_customerId == null && _name.text.trim().isNotEmpty) 'customer_name': _name.text.trim(),
       }));
       final sale = Sale.fromJson(Map<String, dynamic>.from(r['order'] as Map));
+      if (widget.setup.kitchenPrinters.isNotEmpty) {
+        final messenger = ScaffoldMessenger.of(context);
+        Receipt.printKitchen(sale, widget.setup,
+                [for (final l in widget.lines) (l.qty, l.product.name, l.product.categIds)])
+            .then((failed) {
+          if (failed.isNotEmpty) {
+            messenger.showSnackBar(SnackBar(content: Text('Order ticket not printed on: ${failed.join(', ')}. Check the printer is on.')));
+          }
+        });
+      }
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ReceiptScreen(sale: sale, setup: widget.setup, autoPrint: true),

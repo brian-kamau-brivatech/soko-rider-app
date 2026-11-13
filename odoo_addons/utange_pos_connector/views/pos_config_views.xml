@@ -7,9 +7,11 @@
         <field name="arch" type="xml">
             <tree create="false" delete="false">
                 <field name="name"/>
-                <field name="utange_require_sheet"/>
-                <field name="utange_count_at_close"/>
                 <field name="utange_store_location_id"/>
+                <field name="utange_bar_location_id"/>
+                <field name="utange_kitchen_location_id"/>
+                <field name="utange_require_sheet"/>
+                <field name="utange_block_zero"/>
             </tree>
         </field>
     </record>
@@ -22,20 +24,60 @@
             <form create="false" delete="false">
                 <sheet>
                     <div class="oe_title"><h1><field name="name" readonly="1"/></h1></div>
-                    <group string="Stock sheet">
+                    <group string="Stock locations">
+                        <field name="utange_store_location_id"/>
+                        <field name="utange_bar_location_id"/>
+                        <field name="utange_kitchen_location_id"/>
+                    </group>
+                    <p class="text-muted">
+                        Set "Sold from (stock)" = Bar or Kitchen on each POS category (Point of Sale &gt; Configuration &gt; PoS Product Categories),
+                        or on a single product. Sales are taken off that location; items with neither use the POS operation type's location.
+                    </p>
+                    <group string="Rules">
+                        <field name="utange_block_zero"/>
+                        <field name="utange_auto_issue"/>
                         <field name="utange_require_sheet"/>
                         <field name="utange_count_at_close"/>
                         <field name="utange_sheet_categ_ids" widget="many2many_tags"/>
                     </group>
-                    <group string="Requisitions">
-                        <field name="utange_store_location_id"/>
-                    </group>
                     <p class="text-muted">
-                        The bar stock location is the source location of this POS's operation type.
                         Cashiers and their PINs are the POS employees ("Log in with employees" in the POS settings).
                     </p>
                 </sheet>
             </form>
+        </field>
+    </record>
+
+    <record id="view_pos_category_form_utange" model="ir.ui.view">
+        <field name="name">pos.category.form.utange</field>
+        <field name="model">pos.category</field>
+        <field name="inherit_id" ref="point_of_sale.product_pos_category_form_view"/>
+        <field name="arch" type="xml">
+            <field name="parent_id" position="after">
+                <field name="utange_stock_point"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="view_pos_category_tree_utange" model="ir.ui.view">
+        <field name="name">pos.category.tree.utange</field>
+        <field name="model">pos.category</field>
+        <field name="inherit_id" ref="point_of_sale.product_pos_category_tree_view"/>
+        <field name="arch" type="xml">
+            <field name="display_name" position="after">
+                <field name="utange_stock_point" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="view_product_template_form_utange" model="ir.ui.view">
+        <field name="name">product.template.form.utange</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="point_of_sale.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <field name="pos_categ_ids" position="after">
+                <field name="utange_stock_point" invisible="not available_in_pos" groups="point_of_sale.group_pos_user"/>
+            </field>
         </field>
     </record>
 

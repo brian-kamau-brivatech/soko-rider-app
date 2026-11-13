@@ -15,7 +15,9 @@ class _SetupScreenState extends State<SetupScreen> {
   final _server = TextEditingController(text: Store.i.server);
   final _db = TextEditingController(text: Store.i.db);
   final _pin = TextEditingController();
+  int _taps = 0;
   bool _busy = false;
+  bool _advanced = AppConfig.defaultServer.isEmpty || Store.i.server.isEmpty;
   String? _error;
   List<PosConfigInfo>? _configs;
 
@@ -28,8 +30,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _check() async {
-    if (_server.text.trim().isEmpty || _pin.text.trim().length < 4) {
-      setState(() => _error = 'Enter the server address and the device PIN.');
+    if (_server.text.trim().isEmpty || _pin.text.trim().length < 3) {
+      setState(() => _error = _server.text.trim().isEmpty ? 'Enter the Odoo address (tap the logo 5 times).' : 'Enter a POS manager PIN.');
       return;
     }
     setState(() {
@@ -65,35 +67,48 @@ class _SetupScreenState extends State<SetupScreen> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 440),
               child: Column(children: [
-                const Icon(Icons.point_of_sale_rounded, color: C.gold, size: 56),
+                GestureDetector(
+                  onTap: () {
+                    _taps++;
+                    if (_taps >= 5) setState(() => _advanced = true);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+                    child: Image.asset('assets/brv_logo.png', height: 110),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Text(AppConfig.appName, style: h(28, color: Colors.white)),
+                const Text('by BRV POS', style: TextStyle(color: C.gold, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
-                const Text('Set up this handheld (BRV technician).',
+                const Text('Set up this handheld: a POS manager enters their PIN.',
                     textAlign: TextAlign.center, style: TextStyle(color: Color(0xFFC9D3E0), fontSize: 15)),
                 const SizedBox(height: 24),
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(22)),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    TextField(
+                    if (_advanced)
+                      TextField(
                       controller: _server,
                       keyboardType: TextInputType.url,
                       autocorrect: false,
                       decoration: const InputDecoration(
                           labelText: 'Odoo address', hintText: 'https://utangevillage.example.co.ke', prefixIcon: Icon(Icons.link_rounded)),
                     ),
-                    TextField(
-                      controller: _db,
-                      autocorrect: false,
-                      decoration: const InputDecoration(labelText: 'Database', prefixIcon: Icon(Icons.storage_rounded)),
-                    ),
+                    if (_advanced)
+                      TextField(
+                        controller: _db,
+                        autocorrect: false,
+                        decoration: const InputDecoration(labelText: 'Database', prefixIcon: Icon(Icons.storage_rounded)),
+                      ),
                     TextField(
                       controller: _pin,
                       obscureText: true,
                       keyboardType: TextInputType.number,
                       onSubmitted: (_) => _check(),
-                      decoration: const InputDecoration(labelText: 'Device PIN', prefixIcon: Icon(Icons.lock_rounded)),
+                      decoration: const InputDecoration(labelText: 'POS manager PIN', prefixIcon: Icon(Icons.lock_rounded)),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
