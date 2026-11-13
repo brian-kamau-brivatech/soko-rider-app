@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_pos_config_utange_tree" model="ir.ui.view">
+        <field name="name">pos.config.utange.tree</field>
+        <field name="model">pos.config</field>
+        <field name="priority">90</field>
+        <field name="arch" type="xml">
+            <tree create="false" delete="false">
+                <field name="name"/>
+                <field name="utange_require_sheet"/>
+                <field name="utange_count_at_close"/>
+                <field name="utange_store_location_id"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_pos_config_utange_form" model="ir.ui.view">
+        <field name="name">pos.config.utange.form</field>
+        <field name="model">pos.config</field>
+        <field name="priority">90</field>
+        <field name="arch" type="xml">
+            <form create="false" delete="false">
+                <sheet>
+                    <div class="oe_title"><h1><field name="name" readonly="1"/></h1></div>
+                    <group string="Stock sheet">
+                        <field name="utange_require_sheet"/>
+                        <field name="utange_count_at_close"/>
+                        <field name="utange_sheet_categ_ids" widget="many2many_tags"/>
+                    </group>
+                    <group string="Requisitions">
+                        <field name="utange_store_location_id"/>
+                    </group>
+                    <p class="text-muted">
+                        The bar stock location is the source location of this POS's operation type.
+                        Cashiers and their PINs are the POS employees ("Log in with employees" in the POS settings).
+                    </p>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_pos_config_utange" model="ir.actions.act_window">
+        <field name="name">Handheld settings</field>
+        <field name="res_model">pos.config</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_ids" eval="[(5, 0, 0),
+            (0, 0, {'view_mode': 'tree', 'view_id': ref('view_pos_config_utange_tree')}),
+            (0, 0, {'view_mode': 'form', 'view_id': ref('view_pos_config_utange_form')})]"/>
+    </record>
+</odoo>

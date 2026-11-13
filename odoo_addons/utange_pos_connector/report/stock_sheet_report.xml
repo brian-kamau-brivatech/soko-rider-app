@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_stock_sheet" model="ir.actions.report">
+        <field name="name">Stock sheet</field>
+        <field name="model">utange.stock.sheet</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">utange_pos_connector.report_stock_sheet</field>
+        <field name="report_file">utange_pos_connector.report_stock_sheet</field>
+        <field name="print_report_name">'Stock sheet - %s' % (object.name)</field>
+        <field name="binding_model_id" ref="model_utange_stock_sheet"/>
+        <field name="binding_type">report</field>
+    </record>
+
+    <template id="report_stock_sheet">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="o">
+                <t t-call="web.external_layout">
+                    <div class="page" style="font-size: 11px;">
+                        <h4><t t-esc="o.company_id.name"/> - Stock sheet <t t-esc="o.name"/></h4>
+                        <p>
+                            <strong>POS:</strong> <t t-esc="o.config_id.name"/>
+                            <t t-if="o.session_id"> · <strong>Session:</strong> <t t-esc="o.session_id.name"/></t>
+                            · <strong>Opened:</strong> <span t-field="o.open_date"/>
+                            <t t-if="o.open_employee_id"> by <t t-esc="o.open_employee_id.name"/></t>
+                            <t t-if="o.close_date"> · <strong>Closed:</strong> <span t-field="o.close_date"/>
+                                <t t-if="o.close_employee_id"> by <t t-esc="o.close_employee_id.name"/></t></t>
+                        </p>
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Item</th>
+                                    <th class="text-end">Opening</th>
+                                    <th class="text-end">In</th>
+                                    <th class="text-end">Out</th>
+                                    <th class="text-end">Total</th>
+                                    <th class="text-end">Sold</th>
+                                    <th class="text-end">Expected</th>
+                                    <th class="text-end">Closing</th>
+                                    <th class="text-end">Diff</th>
+                                    <th class="text-end">Price</th>
+                                    <th class="text-end">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr t-foreach="o.line_ids" t-as="l">
+                                    <td><t t-esc="l.product_id.display_name"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.counted_open"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.received if l.received else ''"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.sent_out if l.sent_out else ''"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % (l.counted_open + l.received - l.sent_out)"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.sold if l.sold else ''"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.expected_close"/></td>
+                                    <td class="text-end"><t t-esc="'%g' % l.counted_close if l.closed else ''"/></td>
+                                    <td class="text-end" t-att-style="'color:#b91c1c;font-weight:bold' if l.closed and l.close_diff &lt; 0 else ''">
+                                        <t t-esc="'%g' % l.close_diff if l.closed and l.close_diff else ''"/></td>
+                                    <td class="text-end"><t t-esc="'%.0f' % l.price"/></td>
+                                    <td class="text-end"><t t-esc="'{:,.0f}'.format(l.amount) if l.amount else ''"/></td>
+                                </tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="10"><strong>Total sales</strong></td>
+                                    <td class="text-end"><strong><t t-esc="'{:,.0f}'.format(o.amount_total)"/></strong></td>
+                                </tr>
+                                <tr t-if="o.close_date">
+                                    <td colspan="10"><strong>Closing variance at selling price</strong></td>
+                                    <td class="text-end"><strong><t t-esc="'{:,.0f}'.format(o.close_diff_value)"/></strong></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                        <p t-if="o.note"><strong>Notes:</strong> <t t-esc="o.note"/></p>
+                        <p style="margin-top: 30px;">Counted by: ______________________ &#160;&#160; Checked by: ______________________</p>
+                    </div>
+                </t>
+            </t>
+        </t>
+    </template>
+</odoo>

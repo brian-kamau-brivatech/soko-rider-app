@@ -10,6 +10,11 @@ on:
       - '.github/workflows/build_shop.yml'
       - 'brv_pos/**'
       - '.github/workflows/build_brv.yml'
+      - 'brv_pdf_etr/**'
+      - '.github/workflows/build_pdf_etr.yml'
+      - 'utange_app/**'
+      - '.github/workflows/build_utange.yml'
+      - 'odoo_addons/**'
   workflow_dispatch:
 
 permissions:

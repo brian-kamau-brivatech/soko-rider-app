@@ -1,0 +1,14 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_sheet_user,sheet user,model_utange_stock_sheet,point_of_sale.group_pos_user,1,0,0,0
+access_sheet_manager,sheet manager,model_utange_stock_sheet,point_of_sale.group_pos_manager,1,1,1,1
+access_sheet_stock,sheet stock,model_utange_stock_sheet,stock.group_stock_user,1,0,0,0
+access_sheet_line_user,sheet line user,model_utange_stock_sheet_line,point_of_sale.group_pos_user,1,0,0,0
+access_sheet_line_manager,sheet line manager,model_utange_stock_sheet_line,point_of_sale.group_pos_manager,1,1,1,1
+access_sheet_line_stock,sheet line stock,model_utange_stock_sheet_line,stock.group_stock_user,1,0,0,0
+access_req_user,req user,model_utange_requisition,point_of_sale.group_pos_user,1,1,1,0
+access_req_manager,req manager,model_utange_requisition,point_of_sale.group_pos_manager,1,1,1,1
+access_req_stock,req stock,model_utange_requisition,stock.group_stock_user,1,1,0,0
+access_req_stock_mgr,req stock manager,model_utange_requisition,stock.group_stock_manager,1,1,1,1
+access_req_line_user,req line user,model_utange_requisition_line,point_of_sale.group_pos_user,1,1,1,1
+access_req_line_stock,req line stock,model_utange_requisition_line,stock.group_stock_user,1,1,0,0
+access_req_line_stock_mgr,req line stock manager,model_utange_requisition_line,stock.group_stock_manager,1,1,1,1

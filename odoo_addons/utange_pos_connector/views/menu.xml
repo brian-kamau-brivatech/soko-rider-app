@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_utange_root" name="Handheld" parent="point_of_sale.menu_point_root" sequence="25"
+              groups="point_of_sale.group_pos_user,point_of_sale.group_pos_manager"/>
+    <menuitem id="menu_utange_sheets" name="Shift stock sheets" parent="menu_utange_root" action="action_stock_sheet" sequence="1"/>
+    <menuitem id="menu_utange_variances" name="Stock variances" parent="menu_utange_root" action="action_sheet_variances" sequence="2"
+              groups="point_of_sale.group_pos_manager"/>
+    <menuitem id="menu_utange_requisitions" name="Requisitions" parent="menu_utange_root" action="action_requisition" sequence="5"/>
+    <menuitem id="menu_utange_settings" name="Handheld settings" parent="menu_utange_root" action="action_pos_config_utange" sequence="20"
+              groups="point_of_sale.group_pos_manager"/>
+    <menuitem id="menu_utange_requisitions_stock" name="Bar requisitions" parent="stock.menu_stock_root" action="action_requisition"
+              sequence="3" groups="stock.group_stock_user"/>
+</odoo>
