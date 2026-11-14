@@ -47,6 +47,11 @@ patch(PosStore.prototype, {
             }
             throw e;
         }
+        if (res.denied) {
+            await this.popup.add(ErrorPopup, { title: _t("Not allowed"), body: res.denied });
+            this.redirectToBackend();
+            return false;
+        }
         if (!res.needed) {
             return true;
         }
@@ -184,6 +189,10 @@ patch(ClosePosPopup.prototype, {
             return false;
         }
         const res = await this.orm.call("pos.session", "utange_close_lines", [this.pos.pos_session.id, this.pos.utangeEmployeeId()]);
+        if (res.denied) {
+            await this.popup.add(ErrorPopup, { title: _t("Not allowed"), body: res.denied });
+            return false;
+        }
         if (!res.needed) {
             return true;
         }

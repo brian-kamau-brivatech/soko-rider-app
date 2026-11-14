@@ -57,6 +57,10 @@ class UtangeRequisition(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        if not self.env.su:  # the handheld checks its cashier itself
+            denied = self.env.user._utange_denied('requisition')
+            if denied:
+                raise UserError(denied)
         for v in vals_list:
             if v.get('name', '/') == '/':
                 v['name'] = self.env['ir.sequence'].next_by_code('utange.requisition') or '/'

@@ -7,11 +7,24 @@
         <field name="arch" type="xml">
             <xpath expr="//page[@name='access_rights']" position="after">
                 <page string="Utange POS" name="utange_pos" invisible="share">
-                    <group>
+                    <group name="utange_access">
+                        <group string="Utange POS: what this person can do">
+                            <field name="utange_restrict"/>
+                            <field name="utange_perm_sell" invisible="not utange_restrict"/>
+                            <field name="utange_perm_open" invisible="not utange_restrict"/>
+                            <field name="utange_perm_close" invisible="not utange_restrict"/>
+                            <field name="utange_perm_requisition" invisible="not utange_restrict"/>
+                            <field name="utange_perm_purchase" invisible="not utange_restrict"/>
+                            <field name="utange_perm_items" invisible="not utange_restrict"/>
+                        </group>
                         <group string="Approvals">
                             <field name="utange_approver" widget="boolean_toggle"/>
                         </group>
                     </group>
+                    <div class="text-muted mb-3">
+                        "Restrict Utange POS" off: everything allowed (as before). On: only the ticked actions, on the Odoo POS screen,
+                        the handheld (with this person's employee PIN), in Odoo and in the Manager app. Administrators are never restricted.
+                    </div>
                     <div class="text-muted">
                         <p>A person ticked here approves, for the Utange Odoo POS screen, the handheld and the Manager app:</p>
                         <ul>
@@ -35,6 +48,12 @@
             <xpath expr="//field[@name='pin']" position="after">
                 <field name="utange_approver" widget="boolean_toggle"
                        help="This person's PIN approves stock count differences on the Utange POS screen and handheld."/>
+                <field name="utange_restrict" invisible="user_id"
+                       help="For staff without an Odoo login (handheld PIN only). Staff with a login follow the login's BRV Access settings."/>
+                <field name="utange_perm_sell" invisible="user_id or not utange_restrict"/>
+                <field name="utange_perm_open" invisible="user_id or not utange_restrict"/>
+                <field name="utange_perm_close" invisible="user_id or not utange_restrict"/>
+                <field name="utange_perm_requisition" invisible="user_id or not utange_restrict"/>
             </xpath>
         </field>
     </record>

@@ -341,7 +341,14 @@ class UtangeStockSheet(models.Model):
     # ------------------------------------------------------------------
     # Counting in Odoo (same rules as the handheld)
     # ------------------------------------------------------------------
+    def _check_perm(self, perm):
+        if not self.env.su:
+            denied = self.env.user._utange_denied(perm)
+            if denied:
+                raise UserError(denied)
+
     def action_confirm_open(self):
+        self._check_perm('open')
         for s in self:
             if s.state != 'draft':
                 continue
@@ -354,6 +361,7 @@ class UtangeStockSheet(models.Model):
         return True
 
     def action_start_close(self):
+        self._check_perm('close')
         for s in self:
             if s.state != 'open':
                 continue
@@ -364,6 +372,7 @@ class UtangeStockSheet(models.Model):
         return True
 
     def action_confirm_close(self):
+        self._check_perm('close')
         now = fields.Datetime.now()
         for s in self:
             if s.state != 'closing' or s.close_confirmed:

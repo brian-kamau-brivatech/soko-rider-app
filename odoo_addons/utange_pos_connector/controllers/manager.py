@@ -42,7 +42,8 @@ class UtangeManagerApi(http.Controller):
             return bad
         u = request.env.user
         return {'ok': True, 'name': u.name, 'company': request.env.company.name,
-                'approve': u._utange_can_approve()}
+                'approve': u._utange_can_approve(),
+                'perms': {p: u._utange_allowed(p) for p in ('sell', 'open', 'close', 'requisition', 'purchase', 'items')}}
 
     @http.route('/utange/mgr/dashboard', type='json', auth='user', methods=['POST'], csrf=False)
     def dashboard(self, **kw):
@@ -276,6 +277,9 @@ class UtangeManagerApi(http.Controller):
         bad = self._check()
         if bad:
             return bad
+        denied = request.env.user._utange_denied('items')
+        if denied:
+            return {'ok': False, 'error': denied}
         c = request.env['pos.category'].sudo().browse(int(category_id or 0)).exists()
         if not c:
             return {'ok': False, 'error': 'Category not found.'}
@@ -318,6 +322,9 @@ class UtangeManagerApi(http.Controller):
         bad = self._check()
         if bad:
             return bad
+        denied = request.env.user._utange_denied('items')
+        if denied:
+            return {'ok': False, 'error': denied}
         env = request.env
         vals = {}
         if name is not None:
@@ -391,6 +398,9 @@ class UtangeManagerApi(http.Controller):
         bad = self._check()
         if bad:
             return bad
+        denied = request.env.user._utange_denied('purchase')
+        if denied:
+            return {'ok': False, 'error': denied}
         env = request.env
         cfg = self._cfg()
         store = cfg._utange_store_location() if cfg else env['stock.location']

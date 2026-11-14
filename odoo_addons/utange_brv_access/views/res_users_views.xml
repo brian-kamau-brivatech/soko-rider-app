@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Applied after BRV Access's own view (higher priority number): moves the Utange section into its tab. -->
+    <record id="view_users_form_utange_brv" model="ir.ui.view">
+        <field name="name">res.users.form.utange.brv.access</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form"/>
+        <field name="priority">200</field>
+        <field name="arch" type="xml">
+            <xpath expr="//page[.//field[@name='brv_restrict_apps']]" position="inside">
+                <group name="utange_brv">
+                    <group string="Utange POS: what this person can do">
+                        <field name="utange_restrict" string="Restrict Utange POS"/>
+                        <field name="utange_perm_sell" invisible="not utange_restrict"/>
+                        <field name="utange_perm_open" invisible="not utange_restrict"/>
+                        <field name="utange_perm_close" invisible="not utange_restrict"/>
+                        <field name="utange_perm_requisition" invisible="not utange_restrict"/>
+                        <field name="utange_perm_purchase" invisible="not utange_restrict"/>
+                        <field name="utange_perm_items" invisible="not utange_restrict"/>
+                    </group>
+                    <group string="Utange POS: approvals">
+                        <field name="utange_approver" widget="boolean_toggle"/>
+                        <div class="text-muted" colspan="2">
+                            Approves stock count differences and requisitions: employee PIN on the Odoo POS screen / handheld,
+                            this login in the Manager app and Odoo. When nobody is ticked, POS administrators approve.
+                        </div>
+                    </group>
+                </group>
+            </xpath>
+            <xpath expr="//page[@name='utange_pos']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+        </field>
+    </record>
+</odoo>

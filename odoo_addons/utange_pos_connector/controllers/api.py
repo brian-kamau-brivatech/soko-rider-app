@@ -340,6 +340,9 @@ class UtangePosApi(http.Controller):
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
+        denied = self._perm_denied(emp, 'sell')
+        if denied:
+            return {'ok': False, 'error': denied}
         env = request.env
         session = self._open_session(config)
         if not session:
@@ -661,6 +664,10 @@ class UtangePosApi(http.Controller):
     def _points_text(self, config):
         return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
 
+    def _perm_denied(self, emp, perm):
+        """The signed-in cashier's Utange permissions (BRV Access / employee form)."""
+        return emp.sudo()._utange_denied(perm) if emp else ''
+
     def _approver(self, config, emp, role, manager_pin):
         """(name or None, error): a manager's PIN typed now, or the signed-in cashier being a manager."""
         if manager_pin:
@@ -698,6 +705,9 @@ class UtangePosApi(http.Controller):
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
+        denied = self._perm_denied(emp, 'open')
+        if denied:
+            return {'ok': False, 'error': denied}
         by = (' by %s' % emp.name) if emp else ''
         session = self._live_session(config)
         if session and session.state == 'opened':
@@ -756,6 +766,9 @@ class UtangePosApi(http.Controller):
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
+        denied = self._perm_denied(emp, 'open')
+        if denied:
+            return {'ok': False, 'error': denied}
         session = self._open_session(config)
         if not session:
             return {'ok': False, 'error': 'There is no open shift.'}
@@ -812,6 +825,9 @@ class UtangePosApi(http.Controller):
         live = self._live_session(config)
         if not live or live.state not in ('opened', 'closing_control'):
             return {'ok': False, 'error': 'There is no open shift to close.'}
+        denied = self._perm_denied(emp, 'close')
+        if denied:
+            return {'ok': False, 'error': denied}
         if not self._can_close(emp, role, live):
             return {'ok': False, 'error': 'Only a POS manager can close the shift (same as Odoo POS). '
                                           '%s is a cashier: switch to a manager.' % emp.name}
@@ -909,6 +925,9 @@ class UtangePosApi(http.Controller):
         config, emp, _role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
+        denied = self._perm_denied(emp, 'requisition')
+        if denied:
+            return {'ok': False, 'error': denied}
         point = point if point in ('bar', 'kitchen') else 'main'
         bar = config._utange_point_location(point)
         store = config._utange_store_location()

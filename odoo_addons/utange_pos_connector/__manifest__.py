@@ -1,6 +1,6 @@
 {
     'name': 'Utange POS Handheld',
-    'version': '17.0.6.0',
+    'version': '17.0.7.0',
     'license': 'LGPL-3',
     'category': 'Sales/Point of Sale',
     'summary': 'Handheld POS app for Utange: POS employee login, shift stock sheets, bar requisitions',

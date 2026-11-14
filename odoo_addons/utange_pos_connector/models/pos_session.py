@@ -53,6 +53,12 @@ class PosSession(models.Model):
         emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists() if employee_id else False
         return emp or self.env.user.employee_id or None
 
+    def _utange_perm_denied(self, perm, employee_id=False):
+        """'' when the person on the POS screen (cashier employee, else the user) may do it."""
+        emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists() \
+            if employee_id and self.config_id.module_pos_hr else None
+        return (emp or self.env.user)._utange_denied(perm)
+
     def _utange_can_approve_now(self, employee_id):
         emp = self._utange_employee(employee_id) if employee_id else None
         return bool(self._utange_approver(emp, ''))
@@ -61,6 +67,10 @@ class PosSession(models.Model):
         """Opening stock popup: {'needed': bool, 'lines': [...]}."""
         self.ensure_one()
         cfg = self.config_id
+        if self.state == 'opening_control' and not self.rescue:
+            denied = self._utange_perm_denied('open', employee_id)
+            if denied:
+                return {'needed': True, 'denied': denied}
         if self.rescue or not cfg.utange_require_sheet or self.state == 'closed':
             return {'needed': False}
         if self._utange_sheet():
@@ -90,6 +100,9 @@ class PosSession(models.Model):
         self.ensure_one()
         sheet = self._utange_sheet()
         if not sheet:
+            denied = self._utange_perm_denied('open', employee_id)
+            if denied:
+                raise UserError(denied)
             emp = self._utange_employee(employee_id)
             by = self._utange_approver(emp, manager_pin)
             sheet = self.env['utange.stock.sheet'].sudo()._start(self.config_id, self, _counts(counts), employee=emp)
@@ -102,6 +115,10 @@ class PosSession(models.Model):
         """Closing stock popup: {'needed': bool, 'lines': [...]} with the expected quantities."""
         self.ensure_one()
         cfg = self.config_id
+        if not self.rescue:
+            denied = self._utange_perm_denied('close', employee_id)
+            if denied:
+                return {'needed': True, 'denied': denied}
         if self.rescue or not cfg.utange_count_at_close:
             return {'needed': False}
         Sheet = self.env['utange.stock.sheet'].sudo()
@@ -119,6 +136,9 @@ class PosSession(models.Model):
         Sheet = self.env['utange.stock.sheet'].sudo()
         sheet = self._utange_sheet() or Sheet._start(self.config_id, self, {}, outside=True)
         if not sheet.close_confirmed:
+            denied = self._utange_perm_denied('close', employee_id)
+            if denied:
+                raise UserError(denied)
             emp = self._utange_employee(employee_id)
             by = self._utange_approver(emp, manager_pin)
             sheet._finish(_counts(counts), employee=emp)
