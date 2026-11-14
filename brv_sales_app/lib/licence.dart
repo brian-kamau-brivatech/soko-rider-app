@@ -46,7 +46,7 @@ class Licence extends ChangeNotifier {
       await _p.setString('lic_secret', _secret);
     }
     token = _p.getString('lic_token') ?? '';
-    server = _p.getString('lic_server') ?? defaultServer;
+    server = defaultServer; // built into the app, never shown or changed
     status = _p.getString('lic_status') ?? 'none';
     role = _p.getString('lic_role') ?? '';
     company = _p.getString('lic_company') ?? '';
@@ -90,12 +90,6 @@ class Licence extends ChangeNotifier {
       lastSeen = now;
       _p.setString('lic_last_seen', now.toIso8601String());
     }
-  }
-
-  Future<void> setServer(String url) async {
-    server = url.trim().isEmpty ? defaultServer : url.trim();
-    await _p.setString('lic_server', server);
-    notifyListeners();
   }
 
   /// Asks the server about this device. Waiting until BRV (manager) or the manager (sales) adds the code.

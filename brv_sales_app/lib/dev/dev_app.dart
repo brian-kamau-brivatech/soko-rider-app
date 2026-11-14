@@ -39,7 +39,7 @@ class _StartState extends State<_Start> {
   void initState() {
     super.initState();
     SharedPreferences.getInstance().then((p) {
-      Dev.server = p.getString('dev_server') ?? defaultServer;
+      Dev.server = defaultServer;
       Dev.key = p.getString('dev_key') ?? '';
       setState(() {
         _ready = true;
@@ -63,18 +63,15 @@ class _Login extends StatefulWidget {
 }
 
 class _LoginState extends State<_Login> {
-  final _server = TextEditingController(text: Dev.server);
   final _key = TextEditingController();
   bool _busy = false;
 
   Future<void> _go() async {
     setState(() => _busy = true);
-    Dev.server = _server.text.trim().isEmpty ? defaultServer : _server.text.trim();
     Dev.key = _key.text.trim();
     try {
       await Dev.call('GET', '/companies');
       final p = await SharedPreferences.getInstance();
-      await p.setString('dev_server', Dev.server);
       await p.setString('dev_key', Dev.key);
       widget.onDone();
     } on NetError catch (e) {
@@ -93,8 +90,6 @@ class _LoginState extends State<_Login> {
             Center(child: Text('BRV Licence', style: h(26))),
             const Center(child: Text('Developer: companies, licences and devices', style: muted)),
             const SizedBox(height: 24),
-            TextField(controller: _server, decoration: const InputDecoration(labelText: 'Server')),
-            const SizedBox(height: 10),
             TextField(controller: _key, obscureText: true, decoration: const InputDecoration(labelText: 'Developer key')),
             const SizedBox(height: 18),
             FilledButton(onPressed: _busy ? null : _go, child: Text(_busy ? 'Checking...' : 'Sign in')),

@@ -5,38 +5,10 @@ import '../licence.dart';
 import '../sync.dart';
 import '../ui.dart';
 
-/// Hidden settings: the server address (tap the logo 5 times).
-Future<void> serverSettings(BuildContext context) async {
-  final v = await ask(context, 'BRV server', initial: Licence.i.server, label: 'Address, e.g. http://pos.brvsystems.co.ke');
-  if (v == null) return;
-  await Licence.i.setServer(v);
-  if (context.mounted) toast(context, 'Server: ${Licence.i.server}');
-}
-
-class _Logo extends StatefulWidget {
+class _Logo extends StatelessWidget {
   const _Logo();
   @override
-  State<_Logo> createState() => _LogoState();
-}
-
-class _LogoState extends State<_Logo> {
-  int _taps = 0;
-  DateTime _first = DateTime.now();
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: () {
-          final now = DateTime.now();
-          if (now.difference(_first).inSeconds > 4) {
-            _first = now;
-            _taps = 0;
-          }
-          if (++_taps >= 5) {
-            _taps = 0;
-            serverSettings(context);
-          }
-        },
-        child: Image.asset('assets/brv_logo.png', height: 110),
-      );
+  Widget build(BuildContext context) => Image.asset('assets/brv_logo.png', height: 110);
 }
 
 class _CodeCard extends StatelessWidget {
