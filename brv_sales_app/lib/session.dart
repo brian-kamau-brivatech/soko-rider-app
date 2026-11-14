@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'config.dart';
 import 'db.dart';
 import 'fmt.dart';
 import 'perms.dart';
@@ -37,6 +38,22 @@ class Session extends ChangeNotifier {
     return base64Url.encode(h);
   }
 
+  /// The open session (cash drawer) of this terminal, whoever opened it.
+  static Future<Map<String, Object?>?> openSession() => Db.one(
+      "SELECT sh.*, u.name AS opener FROM shifts sh LEFT JOIN users u ON u.id = sh.user_id "
+      "WHERE sh.state = 'open' AND sh.device_no = ? ORDER BY sh.id DESC LIMIT 1",
+      [Db.deviceNo]);
+
+  /// PIN checks run off the screen thread so the app does not freeze.
+  static Future<String> hashPinAsync(String pin, String salt) => compute(_hashWorker, [pin, salt]);
+
+  /// Index of the first (id, salt, hash) whose hash matches the PIN, or -1.
+  static Future<int> _match(String pin, List<List<String>> users) => compute(_matchWorker, [pin, users]);
+
+  /// May this person sign in to this app? (The manager app is only for manager-level users.)
+  static bool allowedHere(Map<String, Object?> u) =>
+      !isManagerApp || n(u['owner']) == 1 || s(u['perms']).split(',').contains(P.managerApp);
+
   static bool pinOk(String pin) => RegExp(r'^\d{4,6}$').hasMatch(pin);
 
   /// Recovery code for the owner (shown once at set-up, used if the owner forgets the PIN).
@@ -50,10 +67,8 @@ class Session extends ChangeNotifier {
 
   /// PINs must be different for everyone (a PIN identifies the person on the receipt and in reports).
   static Future<bool> pinTaken(String pin, {int exceptId = 0}) async {
-    for (final u in await Db.q('SELECT id, pin_salt, pin_hash FROM users WHERE id != ?', [exceptId])) {
-      if (hashPin(pin, s(u['pin_salt'])) == s(u['pin_hash'])) return true;
-    }
-    return false;
+    final users = await Db.q('SELECT id, pin_salt, pin_hash FROM users WHERE id != ?', [exceptId]);
+    return await _match(pin, [for (final u in users) [s(u['id']), s(u['pin_salt']), s(u['pin_hash'])]]) >= 0;
   }
 
   static Future<int> createUser({required String name, required String pin, required int roleId, String phone = '', bool owner = false}) async {
@@ -64,7 +79,7 @@ class Session extends ChangeNotifier {
       'phone': phone.trim(),
       'role_id': roleId,
       'pin_salt': salt,
-      'pin_hash': hashPin(pin, salt),
+      'pin_hash': await hashPinAsync(pin, salt),
       'owner': owner ? 1 : 0,
       'active': 1,
       'created_at': nowIso(),
@@ -74,21 +89,22 @@ class Session extends ChangeNotifier {
   static Future<void> setPin(int userId, String pin) async {
     final db = await Db.get();
     final salt = newSalt();
-    await db.update('users', {'pin_salt': salt, 'pin_hash': hashPin(pin, salt), 'fails': 0, 'locked_until': ''},
+    await db.update('users', {'pin_salt': salt, 'pin_hash': await hashPinAsync(pin, salt), 'fails': 0, 'locked_until': ''},
         where: 'id = ?', whereArgs: [userId]);
   }
 
   /// Checks the PIN of the chosen user. Returns an error text, or null when signed in.
   Future<String?> signIn(int id, String pin) async {
     final db = await Db.get();
-    final u = await Db.one('SELECT * FROM users WHERE id = ? AND active = 1', [id]);
+    final u = await Db.one('SELECT u.*, r.perms FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ? AND u.active = 1', [id]);
     if (u == null) return 'This user is not active.';
+    if (!allowedHere(u)) return 'This app is for managers. Sign in on a BRV Pos Sales device.';
     final until = DateTime.tryParse(s(u['locked_until']));
     if (until != null && until.isAfter(DateTime.now())) {
       final m = until.difference(DateTime.now()).inMinutes + 1;
       return 'Too many wrong PINs. Try again in $m min, or ask a manager to reset the PIN.';
     }
-    if (hashPin(pin, s(u['pin_salt'])) != s(u['pin_hash'])) {
+    if (await hashPinAsync(pin, s(u['pin_salt'])) != s(u['pin_hash'])) {
       final fails = n(u['fails']) + 1;
       await db.update('users', {
         'fails': fails >= 5 ? 0 : fails,
@@ -104,12 +120,11 @@ class Session extends ChangeNotifier {
 
   /// Checks another person's PIN (manager approval on the spot). Returns that user, or null.
   static Future<Map<String, Object?>?> userByPin(String pin, {String? right}) async {
-    for (final u in await Db.q('SELECT u.*, r.perms FROM users u JOIN roles r ON r.id = u.role_id WHERE u.active = 1')) {
-      if (hashPin(pin, s(u['pin_salt'])) == s(u['pin_hash'])) {
-        if (right == null || n(u['owner']) == 1 || s(u['perms']).split(',').contains(right)) return u;
-        return null;
-      }
-    }
+    final users = await Db.q('SELECT u.*, r.perms FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.active = 1');
+    final k = await _match(pin, [for (final u in users) [s(u['id']), s(u['pin_salt']), s(u['pin_hash'])]]);
+    if (k < 0) return null;
+    final u = users[k];
+    if (right == null || n(u['owner']) == 1 || s(u['perms']).split(',').contains(right)) return u;
     return null;
   }
 
@@ -125,8 +140,7 @@ class Session extends ChangeNotifier {
 
   Future<void> refreshShift() async {
     // a shift is one person's cash drawer on this device
-    shift = await Db.one("SELECT * FROM shifts WHERE user_id = ? AND state = 'open' AND device_no = ? ORDER BY id DESC LIMIT 1",
-        [userId, Db.deviceNo]);
+    shift = await openSession();
     notifyListeners();
   }
 
@@ -160,4 +174,15 @@ class Session extends ChangeNotifier {
   }
 
   static List<String> get allRights => P.keys;
+}
+
+String _hashWorker(List<String> a) => Session.hashPin(a[0], a[1]);
+
+int _matchWorker(List<Object> a) {
+  final pin = a[0] as String;
+  final users = (a[1] as List).cast<List<String>>();
+  for (var k = 0; k < users.length; k++) {
+    if (Session.hashPin(pin, users[k][1]) == users[k][2]) return k;
+  }
+  return -1;
 }

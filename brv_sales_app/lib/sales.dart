@@ -115,7 +115,7 @@ class Sales {
     // work on copies: if the sale is refused, the cashier's payments stay as typed
     final pays = [for (final p in given) Pay(p.methodId, p.kind, p.name, p.amount, ref: p.ref)];
     if (cart.isEmpty) throw SaleError('The sale is empty.');
-    if (Settings.i.requireShift && ses.shift == null) throw SaleError('Open your shift first (cash drawer).');
+    if (Settings.i.requireShift && ses.shift == null) throw SaleError('Open a session first (cash drawer).');
     final total = r2(cart.total);
     final paid = r2(pays.fold<double>(0, (a, p) => a + p.amount));
     if (paid + 0.004 < total) throw SaleError('Paid ${money(paid)} is less than the total ${money(total)}.');
@@ -147,7 +147,8 @@ class Sales {
           }
         }
       }
-      if (Settings.i.blockNoStock && !ses.can('sell_no_stock')) {
+      if (Settings.i.blockNoStock) {
+        // strict: nobody (owner included) sells more than the stock at this location
         final need = <int, double>{};
         final names = <int, String>{};
         for (final l in cart.lines.where((l) => l.track)) {
@@ -266,18 +267,20 @@ class Sales {
 
 /// Shifts: the cash drawer of one person from opening to closing.
 class Shifts {
-  static Future<void> open({required int locationId, required double openingCash}) async {
+  /// Opens the session (cash drawer) of this terminal. Every cashier then signs in with their PIN and sells in it.
+  static Future<void> open({required int locationId, required double openingCash, int? userId}) async {
     final ses = Session.i;
+    final opener = userId ?? ses.userId;
     final db = await Db.get();
     await db.transaction((tx) async {
-      final open = await tx.rawQuery("SELECT id FROM shifts WHERE user_id = ? AND state = 'open' AND device_no = ?", [ses.userId, Db.deviceNo]);
-      if (open.isNotEmpty) throw SaleError('You already have an open shift on this device.');
+      final open = await tx.rawQuery("SELECT id FROM shifts WHERE state = 'open' AND device_no = ?", [Db.deviceNo]);
+      if (open.isNotEmpty) throw SaleError('A session is already open on this device.');
       final number = await Db.nextNumber(tx, 'shift', 'SH-', 5);
       await Db.ins(tx, 'shifts', {
-        'number': number, 'user_id': ses.userId, 'location_id': locationId, 'opened_at': nowIso(),
+        'number': number, 'user_id': opener, 'location_id': locationId, 'opened_at': nowIso(),
         'opening_cash': openingCash, 'state': 'open', 'device_no': Db.deviceNo,
       });
-      await Db.audit(tx, ses.userId, 'shift_open', '$number float ${money(openingCash)}');
+      await Db.audit(tx, opener, 'shift_open', '$number float ${money(openingCash)}');
     });
     await ses.refreshShift();
   }
@@ -316,7 +319,7 @@ class Shifts {
     final db = await Db.get();
     await db.transaction((tx) async {
       final sh = await tx.rawQuery('SELECT * FROM shifts WHERE id = ?', [shiftId]);
-      if (sh.isEmpty || s(sh.first['state']) != 'open') throw SaleError('This shift is not open.');
+      if (sh.isEmpty || s(sh.first['state']) != 'open') throw SaleError('This session is not open.');
       await tx.update('shifts', {
         'closed_at': nowIso(), 'expected_cash': expected, 'counted_cash': counted, 'diff': diff, 'state': 'closed', 'note': note,
       }, where: 'id = ?', whereArgs: [shiftId]);
@@ -324,7 +327,7 @@ class Shifts {
         final cash = await Db.account(tx, 'cash');
         final other = await Db.account(tx, diff < 0 ? 'cash_short' : 'cash_over');
         final a = diff.abs();
-        await Ledger.post(tx, ref: s(sh.first['number']), memo: 'Shift ${sh.first['number']} cash ${diff < 0 ? 'short' : 'over'}',
+        await Ledger.post(tx, ref: s(sh.first['number']), memo: 'Session ${sh.first['number']} cash ${diff < 0 ? 'short' : 'over'}',
             kind: 'shift', userId: ses.userId,
             lines: diff < 0 ? [(other, a, 0.0, ''), (cash, 0.0, a, '')] : [(cash, a, 0.0, ''), (other, 0.0, a, '')]);
       }
@@ -346,6 +349,10 @@ class Shifts {
         [shiftId]);
     final refunds = await Db.one(
         "SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE shift_id = ? AND kind = 'refund'", [shiftId]);
+    final byUser = await Db.q(
+        "SELECT u.name, COUNT(CASE WHEN s.kind = 'sale' THEN 1 END) c, COALESCE(SUM(s.total),0) t FROM sales s "
+        "LEFT JOIN users u ON u.id = s.user_id WHERE s.shift_id = ? GROUP BY s.user_id ORDER BY t DESC",
+        [shiftId]);
     final methods = await Db.q(
         'SELECT m.name, SUM(sp.amount) a FROM sale_payments sp JOIN sales s ON s.id = sp.sale_id '
         'JOIN pay_methods m ON m.id = sp.method_id WHERE s.shift_id = ? GROUP BY m.id ORDER BY a DESC',
@@ -355,6 +362,7 @@ class Shifts {
       'sales': sales ?? <String, Object?>{},
       'refunds': refunds ?? <String, Object?>{},
       'methods': methods,
+      'by_user': byUser,
       'cash': await cashSummary(shiftId),
     };
   }

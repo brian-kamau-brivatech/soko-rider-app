@@ -24,13 +24,13 @@ class _StockHomeState extends State<StockHome> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     super.dispose();
   }
 
@@ -105,13 +105,13 @@ class _StockListState extends State<StockList> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     super.dispose();
   }
 

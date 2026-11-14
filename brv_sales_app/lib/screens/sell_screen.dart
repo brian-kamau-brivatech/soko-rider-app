@@ -64,7 +64,7 @@ class _SellScreenState extends State<SellScreen> {
 
   void _add(Map<String, Object?> p) {
     final tracked = n(p['track']) == 1;
-    if (tracked && Settings.i.blockNoStock && !Session.i.can(P.sellNoStock)) {
+    if (tracked && Settings.i.blockNoStock) {
       final left = d(p['on_hand']) - Cart.i.qtyOf(n(p['id']));
       if (left < 1 - 0.00001) {
         toast(context, '${p['name']}: no stock left here. Make a requisition from the store.');
@@ -89,6 +89,34 @@ class _SellScreenState extends State<SellScreen> {
   Widget build(BuildContext context) {
     final ses = Session.i;
     final needShift = Settings.i.requireShift && ses.shift == null;
+    if (needShift) {
+      // no session open on this terminal: open one first, then each cashier signs in to sell
+      return Scaffold(
+        appBar: TopBar('Sell'),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.point_of_sale_outlined, size: 64, color: C.amber),
+              const SizedBox(height: 12),
+              Text('No session open', style: h(22)),
+              const SizedBox(height: 6),
+              const Text('Open a session on this terminal (choose the shop and count the cash in the drawer). '
+                  'Then each cashier signs in with their PIN to sell.', textAlign: TextAlign.center, style: TextStyle(color: C.muted)),
+              const SizedBox(height: 18),
+              if (ses.can(P.shift))
+                FilledButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShiftScreen())),
+                  icon: const Icon(Icons.lock_open),
+                  label: const Text('Open session'),
+                )
+              else
+                const Text('Ask a supervisor to open the session.', style: TextStyle(fontWeight: FontWeight.w700)),
+            ]),
+          ),
+        ),
+      );
+    }
     final q = _q.trim().toLowerCase();
     final shown = _products.where((p) {
       if (_cat > 0 && n(p['category_id']) != _cat) return false;
@@ -113,7 +141,7 @@ class _SellScreenState extends State<SellScreen> {
             child: Row(children: [
               const Icon(Icons.lock_outline, color: C.amber),
               const SizedBox(width: 10),
-              const Expanded(child: Text('Open your shift (cash drawer) to sell.', style: TextStyle(fontWeight: FontWeight.w700))),
+              const Expanded(child: Text('Open a session (cash drawer) to sell.', style: TextStyle(fontWeight: FontWeight.w700))),
               if (ses.can(P.shift))
                 FilledButton(
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShiftScreen())),

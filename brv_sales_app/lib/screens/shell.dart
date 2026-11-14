@@ -47,9 +47,11 @@ class _ShellState extends State<Shell> {
 
   List<_Tab> _tabs() {
     final ses = Session.i;
+    // Manager app: no selling. Sales app: opens on Sell.
+    final sell = !isManagerApp && ses.can(P.sell);
     return [
+      if (sell) const _Tab('Sell', Icons.point_of_sale_outlined, Icons.point_of_sale_rounded, SellScreen()),
       const _Tab('Home', Icons.grid_view_outlined, Icons.grid_view_rounded, HomePage()),
-      if (ses.can(P.sell)) const _Tab('Sell', Icons.point_of_sale_outlined, Icons.point_of_sale_rounded, SellScreen()),
       if (ses.can(P.products) || ses.can(P.stockAdjust) || ses.can(P.reqCreate) || ses.can(P.reqApprove) || ses.can(P.purchase) || ses.can(P.purchaseReceive))
         const _Tab('Stock', Icons.inventory_2_outlined, Icons.inventory_2_rounded, StockHome()),
       if (ses.can(P.reports)) const _Tab('Reports', Icons.insights_outlined, Icons.insights_rounded, ReportsScreen()),
@@ -76,7 +78,8 @@ class _ShellState extends State<Shell> {
           child: MediaQuery.removePadding(
             context: context,
             removeTop: days <= 7,
-            child: IndexedStack(index: _i, children: [for (final t in tabs) t.page]),
+            // only the open tab is built: switching tabs loads fresh figures, hidden tabs do no work
+            child: KeyedSubtree(key: ValueKey(tabs[_i].label), child: tabs[_i].page),
           ),
         ),
       ]),

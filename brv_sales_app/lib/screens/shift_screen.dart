@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../backup.dart';
 import '../bus.dart';
+import '../config.dart';
 import '../db.dart';
 import '../fmt.dart';
 import '../perms.dart';
@@ -55,7 +56,16 @@ class _ShiftScreenState extends State<ShiftScreen> {
     try {
       await Shifts.open(locationId: _loc, openingCash: f);
       changed();
-      if (mounted) toast(context, 'Shift open. You can sell now.');
+      if (isSalesApp) {
+        // one terminal, many cashiers: back to the sign-in screen, each cashier taps their name to sell
+        if (mounted) {
+          toast(context, 'Session open. Tap your name and enter your PIN to sell.');
+          Navigator.of(context).popUntil((r) => r.isFirst);
+        }
+        Session.i.lock();
+        return;
+      }
+      if (mounted) toast(context, 'Session open. You can sell now.');
       await _load();
     } on SaleError catch (e) {
       if (mounted) toast(context, e.message);
@@ -73,9 +83,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     }
     final expected = _cash?['expected'] ?? 0;
     final diff = r2(c - expected);
-    if (!await confirm(context, 'Close shift ${sh['number']}?',
+    if (!await confirm(context, 'Close session ${sh['number']}?',
         'Expected ${money(expected)}\nCounted ${money(c)}\n${diff == 0 ? 'No difference.' : 'Difference ${diff > 0 ? '+' : ''}${money(diff)} (${diff < 0 ? 'short' : 'over'})'}',
-        ok: 'Close shift')) {
+        ok: 'Close session')) {
       return;
     }
     setState(() => _busy = true);
@@ -97,9 +107,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final sh = Session.i.shift;
     final cash = _cash;
     return Scaffold(
-      appBar: AppBar(title: const Text('Shift'), actions: [
+      appBar: AppBar(title: const Text('Session'), actions: [
         IconButton(
-          tooltip: 'Past shifts',
+          tooltip: 'Past sessions',
           onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShiftHistory())),
           icon: const Icon(Icons.history),
         ),
@@ -109,7 +119,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: box(color: C.ink, border: false),
-            child: const Text('Open your shift: choose where you sell from and count the cash already in the drawer.',
+            child: const Text('Open a session: choose where you sell from and count the cash already in the drawer.',
                 style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
           ),
           const Label('Selling from'),
@@ -121,13 +131,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
           const Label('Cash in the drawer now (float)'),
           TextField(controller: _float, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(prefixText: 'KSh ')),
           const SizedBox(height: 20),
-          FilledButton(onPressed: _busy ? null : _open, child: const Text('Open shift')),
+          FilledButton(onPressed: _busy ? null : _open, child: const Text('Open session')),
         ] else ...[
           Container(
             padding: const EdgeInsets.all(18),
             decoration: box(color: C.ink, border: false),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Shift ${s(sh['number'])}', style: h(20, color: Colors.white)),
+              Text('Session ${s(sh['number'])}', style: h(20, color: Colors.white)),
               Text('Open since ${dateText(sh['opened_at'])}', style: const TextStyle(color: Color(0xFFCBD5E1))),
               const SizedBox(height: 12),
               const Text('Cash expected in the drawer', style: TextStyle(color: Color(0xFFCBD5E1))),
@@ -147,18 +157,18 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 KV('Expected', money(cash['expected']!), bold: true),
               ]),
             ),
-          const Label('Close the shift: count the cash'),
+          const Label('Close the session: count the cash'),
           TextField(controller: _counted, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Cash counted', prefixText: 'KSh ')),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _busy ? null : _close,
             style: FilledButton.styleFrom(backgroundColor: C.red),
-            child: const Text('Close shift and print Z report'),
+            child: const Text('Close session and print Z report'),
           ),
           const SizedBox(height: 10),
           OutlinedButton(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ZReport(shiftId: n(sh['id'])))),
-            child: const Text('X report (so far, shift stays open)'),
+            child: const Text('X report (so far, session stays open)'),
           ),
         ],
       ]),
@@ -191,9 +201,9 @@ class _ZReportState extends State<ZReport> {
     final cash = r['cash'] as Map<String, double>;
     final closed = s(sh['state']) == 'closed';
     return [
-      PLine.center(closed ? 'Z REPORT' : 'X REPORT (shift open)', size: 23, bold: true),
+      PLine.center(closed ? 'Z REPORT' : 'X REPORT (session open)', size: 23, bold: true),
       const PLine.dash(),
-      PLine.row('Shift', s(sh['number'])),
+      PLine.row('Session', s(sh['number'])),
       PLine.row('Cashier', s(sh['user'])),
       PLine.row('Location', s(sh['location'])),
       PLine.row('Opened', dateText(sh['opened_at'])),
@@ -204,6 +214,10 @@ class _ZReportState extends State<ZReport> {
       if (d(sales['dsc']) != 0) PLine.row('Discounts', money(d(sales['dsc']), symbol: false)),
       if (d(sales['x']) != 0) PLine.row('VAT in sales', money(d(sales['x']), symbol: false)),
       if (n(ref['c']) > 0) PLine.row('Refunds (${n(ref['c'])})', money(d(ref['t']), symbol: false)),
+      const PLine.dash(),
+      const PLine.left('By cashier', bold: true),
+      for (final u in ((r['by_user'] as List?) ?? const []).cast<Map<String, Object?>>())
+        PLine.row('  ${s(u['name'])} (${n(u['c'])})', money(d(u['t']), symbol: false)),
       const PLine.dash(),
       const PLine.left('Payments', bold: true),
       for (final m in (r['methods'] as List).cast<Map<String, Object?>>()) PLine.row('  ${s(m['name'])}', money(d(m['a']), symbol: false)),
@@ -224,17 +238,17 @@ class _ZReportState extends State<ZReport> {
   Widget build(BuildContext context) {
     final r = _r;
     return Scaffold(
-      appBar: AppBar(title: const Text('Shift report'), actions: [
+      appBar: AppBar(title: const Text('Session report'), actions: [
         if (r != null)
           IconButton(
             onPressed: () async {
-              final ok = await Printer.printLines(_lines(r), 'Shift report');
+              final ok = await Printer.printLines(_lines(r), 'Session report');
               if (context.mounted) toast(context, ok ? 'Printed.' : 'Printer not found. Choose it in More > Printer.');
             },
             icon: const Icon(Icons.print_outlined),
           ),
         if (r != null)
-          IconButton(onPressed: () => Printer.pdf(_lines(r), 'Shift report', share: true), icon: const Icon(Icons.share_outlined)),
+          IconButton(onPressed: () => Printer.pdf(_lines(r), 'Session report', share: true), icon: const Icon(Icons.share_outlined)),
       ]),
       body: r == null
           ? const Center(child: CircularProgressIndicator())
@@ -273,9 +287,9 @@ class _ShiftHistoryState extends State<ShiftHistory> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Shifts')),
+        appBar: AppBar(title: const Text('Sessions')),
         body: _rows.isEmpty
-            ? const Empty(Icons.history, 'No shifts yet.')
+            ? const Empty(Icons.history, 'No sessions yet.')
             : ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 itemCount: _rows.length,

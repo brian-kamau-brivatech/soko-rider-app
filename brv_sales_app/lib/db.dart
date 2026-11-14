@@ -11,9 +11,20 @@ class Db {
   static Future<Database> get() async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, fileName), version: 1, onCreate: (db, v) async {
+    _db = await openDatabase(p.join(dir, fileName), version: 2, onCreate: (db, v) async {
       await _schema(db);
       await _syncSchema(db);
+      await _indexes(db);
+    }, onUpgrade: (db, oldV, newV) async {
+      if (oldV < 2) {
+        await _indexes(db);
+        await _kvTriggers(db); // new shared setting: receipt logo
+        // only manager-level roles may use the Manager app
+        for (final r in await db.rawQuery("SELECT id, perms FROM roles WHERE name IN ('Manager', 'Accountant')")) {
+          final perms = s(r['perms']).split(',').where((x) => x.isNotEmpty).toSet()..add(P.managerApp);
+          await db.update('roles', {'perms': perms.join(',')}, where: 'id = ?', whereArgs: [r['id']]);
+        }
+      }
     }, onConfigure: (db) async {
       await db.execute('PRAGMA foreign_keys = OFF');
     });
@@ -158,8 +169,35 @@ class Db {
   /// Business settings shared by all devices (printer, paper, selling location stay per device).
   static const sharedKeys = [
     'business_name', 'phone', 'address', 'email', 'tax_pin', 'receipt_header', 'receipt_footer', 'vat_registered',
-    'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash',
+    'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash', 'receipt_logo',
   ];
+
+  /// Faster dashboards, reports and stock screens.
+  static Future<void> _indexes(Database db) async {
+    for (final sql in [
+      'CREATE INDEX IF NOT EXISTS sales_date ON sales(date)',
+      'CREATE INDEX IF NOT EXISTS sales_shift ON sales(shift_id)',
+      'CREATE INDEX IF NOT EXISTS lines_product ON sale_lines(product_id)',
+      'CREATE INDEX IF NOT EXISTS pays_sale ON sale_payments(sale_id)',
+      'CREATE INDEX IF NOT EXISTS moves_from ON stock_moves(from_loc)',
+      'CREATE INDEX IF NOT EXISTS moves_to ON stock_moves(to_loc)',
+      'CREATE INDEX IF NOT EXISTS jl_journal ON journal_lines(journal_id)',
+      'CREATE INDEX IF NOT EXISTS journal_date ON journal(date)',
+      'CREATE INDEX IF NOT EXISTS shifts_device ON shifts(device_no, state)',
+      'CREATE INDEX IF NOT EXISTS stock_loc ON stock(location_id)',
+    ]) {
+      await db.execute(sql);
+    }
+  }
+
+  static Future<void> _kvTriggers(Database db) async {
+    const on = '(SELECT muted FROM sync_state) = 0';
+    final keys = sharedKeys.map((k) => "'$k'").join(',');
+    await db.execute('DROP TRIGGER IF EXISTS kv_ai');
+    await db.execute('DROP TRIGGER IF EXISTS kv_au');
+    await db.execute("CREATE TRIGGER kv_ai AFTER INSERT ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
+    await db.execute("CREATE TRIGGER kv_au AFTER UPDATE ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
+  }
 
   static Future<void> _syncSchema(Database db) async {
     await db.execute('CREATE TABLE outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT, rid TEXT, deleted INTEGER DEFAULT 0)');
@@ -171,9 +209,7 @@ class Db {
       await db.execute("CREATE TRIGGER ${t}_au AFTER UPDATE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
       await db.execute("CREATE TRIGGER ${t}_ad AFTER DELETE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid, deleted) VALUES ('$t', OLD.id, 1); END");
     }
-    final keys = sharedKeys.map((k) => "'$k'").join(',');
-    await db.execute("CREATE TRIGGER kv_ai AFTER INSERT ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
-    await db.execute("CREATE TRIGGER kv_au AFTER UPDATE ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
+    await _kvTriggers(db);
   }
 
   /// This device's number in its company (from the licence), used for ids and receipt numbers.

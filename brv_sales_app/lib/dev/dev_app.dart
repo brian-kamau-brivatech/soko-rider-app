@@ -332,6 +332,62 @@ class _CompanyScreenState extends State<CompanyScreen> {
     await _patch({'add_days': days}, 'Added $days days.');
   }
 
+  /// Forgotten PIN: choose the user, set a new PIN; the manager phone applies it at its next sync.
+  Future<void> _pinReset() async {
+    List<Map<String, dynamic>> users;
+    try {
+      final r = await Dev.call('GET', '/companies/${widget.id}/users');
+      users = ((r['users'] as List?) ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } on NetError catch (e) {
+      if (mounted) toast(context, e.message);
+      return;
+    }
+    if (!mounted) return;
+    if (users.isEmpty) {
+      toast(context, 'No users yet. The manager phone sends its users when it syncs.');
+      return;
+    }
+    final u = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          ListTile(title: Text('Reset whose PIN?', style: h(17))),
+          for (final x in users)
+            ListTile(
+              leading: Icon(x['owner'] == true ? Icons.star : Icons.person_outline, color: x['active'] == true ? C.ink : C.muted),
+              title: Text('${x['name']}', style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text([
+                if ('${x['role'] ?? ''}'.isNotEmpty) '${x['role']}',
+                if (x['active'] != true) 'inactive',
+                if (x['reset_pending'] == true) 'reset waiting for the phone',
+              ].join(' · ')),
+              onTap: () => Navigator.pop(ctx, x),
+            ),
+        ]),
+      ),
+    );
+    if (u == null || !mounted) return;
+    final p1 = await ask(context, 'New PIN for ${u['name']}', label: '4 to 6 digits', number: true);
+    if (p1 == null || !mounted) return;
+    if (!RegExp(r'^\d{4,6}$').hasMatch(p1.trim())) {
+      toast(context, 'The PIN must be 4 to 6 digits.');
+      return;
+    }
+    final p2 = await ask(context, 'Type the PIN again', number: true);
+    if (p2 == null || !mounted) return;
+    if (p2.trim() != p1.trim()) {
+      toast(context, 'The two PINs are different.');
+      return;
+    }
+    try {
+      await Dev.call('POST', '/companies/${widget.id}/pin_reset', body: {'user_id': u['id'], 'pin': p1.trim()});
+      if (mounted) toast(context, 'Done. The manager phone applies the new PIN at its next sync (open it while online).');
+    } on NetError catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
   String _shown(String code) => code.length == 12 ? '${code.substring(0, 4)}-${code.substring(4, 8)}-${code.substring(8)}' : code;
 
   @override
@@ -404,6 +460,13 @@ class _CompanyScreenState extends State<CompanyScreen> {
                   final ph = await ask(context, 'Phone', initial: '${c['phone']}');
                   await _patch({'name': nm.trim(), 'phone': (ph ?? '${c['phone']}').trim()}, 'Saved.');
                 },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.lock_reset),
+                title: const Text("Reset a user's PIN"),
+                subtitle: const Text('For a manager who forgot the PIN'),
+                onTap: _pinReset,
               ),
             ]),
           ),

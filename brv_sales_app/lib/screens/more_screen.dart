@@ -60,7 +60,7 @@ class MoreScreen extends StatelessWidget {
         else
           const Padding(padding: EdgeInsets.only(bottom: 16), child: LicenceCard()),
         Group('Selling', [
-          if (ses.can(P.shift)) item(Icons.lock_clock_outlined, 'Shift (cash drawer)', const ShiftScreen(), sub: ses.shift == null ? 'Closed' : 'Open'),
+          if (!isManagerApp && ses.can(P.shift)) item(Icons.lock_clock_outlined, 'Session (cash drawer)', const ShiftScreen(), sub: ses.shift == null ? 'Closed' : 'Open · close it here'),
           item(Icons.receipt_long_outlined, ses.can(P.allSales) ? 'Sales' : 'My sales', const SalesScreen()),
           if (ses.can(P.customers) || ses.can(P.customerPay)) item(Icons.people_outline, 'Customers', const CustomersScreen(), sub: 'Credit, balances, payments'),
         ]),

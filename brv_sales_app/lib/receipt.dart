@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/painting.dart';
@@ -97,6 +98,24 @@ class Printer {
       }
     }
 
+    // company logo above the business name
+    if (header && st.get('receipt_logo').isNotEmpty) {
+      try {
+        final codec = await ui.instantiateImageCodec(base64Decode(st.get('receipt_logo')));
+        final logo = (await codec.getNextFrame()).image;
+        var lw = inner * 0.6, lh = lw * logo.height / logo.width;
+        final maxH = 150.0 * k;
+        if (lh > maxH) {
+          lh = maxH;
+          lw = lh * logo.width / logo.height;
+        }
+        ops.add((6.0 * k, (c, y) {}));
+        ops.add((lh + 6 * k, (c, y) {
+          c.drawImageRect(logo, Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+              Rect.fromLTWH((w - lw) / 2, y, lw, lh), Paint()..filterQuality = FilterQuality.high);
+        }));
+      } catch (_) {}
+    }
     final all = <PLine>[
       if (header) ...[
         PLine.center(st.businessName, size: 25, bold: true),

@@ -54,13 +54,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     super.dispose();
   }
 
@@ -207,7 +207,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             if (openShifts.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.lock_open_rounded, color: C.green),
-                title: Text('${openShifts.length} shift${openShifts.length == 1 ? '' : 's'} open'),
+                title: Text('${openShifts.length} session${openShifts.length == 1 ? '' : 's'} open'),
                 subtitle: Text(openShifts.map((e) => s(e['user'])).join(', ')),
               ),
             if (low > 0)
@@ -334,14 +334,14 @@ class _MyDayState extends State<MyDay> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     Session.i.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     Session.i.removeListener(_load);
     super.dispose();
   }
@@ -371,8 +371,8 @@ class _MyDayState extends State<MyDay> {
             decoration: box(),
             child: ListTile(
               leading: Icon(shift == null ? Icons.lock_outline : Icons.lock_open_rounded, color: shift == null ? C.muted : C.green),
-              title: Text(shift == null ? 'Shift closed' : 'Shift ${s(shift['number'])} open'),
-              subtitle: Text(shift == null ? 'Open your shift to start selling' : 'Since ${dateText(shift['opened_at'])}'),
+              title: Text(shift == null ? 'No session open' : 'Session ${s(shift['number'])} open'),
+              subtitle: Text(shift == null ? 'Open a session to start selling' : 'Since ${dateText(shift['opened_at'])}'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShiftScreen())),
             ),

@@ -29,13 +29,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     super.dispose();
   }
 
@@ -221,7 +221,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     OutlinedButton.icon(
                       onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShiftHistory())),
                       icon: const Icon(Icons.history),
-                      label: const Text('Shift (Z) reports'),
+                      label: const Text('Session (Z) reports'),
                     ),
                   ]),
           ),

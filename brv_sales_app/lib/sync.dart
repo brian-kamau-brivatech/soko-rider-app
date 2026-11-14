@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'bus.dart';
+import 'config.dart';
 import 'db.dart';
 import 'fmt.dart';
 import 'licence.dart';
@@ -74,9 +75,10 @@ class Sync extends ChangeNotifier {
           push.add(rows.isEmpty ? {'tbl': tbl, 'rid': rid, 'deleted': true} : {'tbl': tbl, 'rid': rid, 'data': rows.first});
         }
         final since = int.tryParse(await Db.kv('sync_rev') ?? '') ?? 0;
+        final acks = (await Db.kv('cmd_acks') ?? '').split(',').where((e) => e.isNotEmpty).map(int.parse).toList();
         final Map<String, dynamic> r;
         try {
-          r = await Net.call(lic.server, 'POST', '/sync', body: {'since': since, 'push': push}, headers: lic.auth, timeoutSec: 40);
+          r = await Net.call(lic.server, 'POST', '/sync', body: {'since': since, 'push': push, 'acks': acks}, headers: lic.auth, timeoutSec: 40);
         } on NetError catch (e) {
           if (e.status == 401) {
             await lic.hello(); // token refresh, or the device was removed
@@ -90,6 +92,7 @@ class Sync extends ChangeNotifier {
           rethrow;
         }
         if (maxSeq > 0) await db.rawDelete('DELETE FROM outbox WHERE seq <= ?', [maxSeq]);
+        if (acks.isNotEmpty) await Db.setKv('cmd_acks', '');
         if (r['licence'] is Map) await lic.apply(Map<String, dynamic>.from(r['licence'] as Map));
         final pull = (r['pull'] as List? ?? const []).cast<Map>();
         if (pull.isNotEmpty) {
@@ -97,6 +100,8 @@ class Sync extends ChangeNotifier {
           pulledAny = true;
         }
         await Db.setKv('sync_rev', '${r['rev'] ?? since}');
+        final cmds = (r['commands'] as List? ?? const []).cast<Map>();
+        if (cmds.isNotEmpty && await _commands(cmds)) continue; // send the acks straight away
         final morePush = await Db.count('SELECT COUNT(*) FROM outbox') > 0;
         if (r['more'] != true && !morePush) break;
       }
@@ -123,6 +128,24 @@ class Sync extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  /// Instructions from BRV (e.g. a PIN reset set in the BRV Licence app). Only the manager app carries them out.
+  Future<bool> _commands(List<Map> cmds) async {
+    if (!isManagerApp) return false;
+    final done = <int>[];
+    for (final c in cmds) {
+      final id = n(c['id']);
+      if (c['kind'] == 'pin_reset') {
+        final uid = n(c['user_id']);
+        if (await Db.count('SELECT COUNT(*) FROM users WHERE id = ?', [uid]) > 0) await Session.setPin(uid, s(c['pin']));
+      }
+      done.add(id); // unknown or applied: either way do not repeat it
+    }
+    final old = (await Db.kv('cmd_acks') ?? '').split(',').where((e) => e.isNotEmpty);
+    await Db.setKv('cmd_acks', {...old, ...done.map((e) => '$e')}.join(','));
+    changed();
+    return done.isNotEmpty;
   }
 
   Future<void> _apply(Database db, List<Map> rows) async {

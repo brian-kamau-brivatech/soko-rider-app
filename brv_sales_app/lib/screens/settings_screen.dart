@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../backup.dart';
 import '../bus.dart';
 import '../db.dart';
@@ -48,8 +52,27 @@ class _BusinessSettingsState extends State<BusinessSettings> {
     if (mounted) toast(context, 'Saved.');
   }
 
+  /// Company logo for the top of receipts: picked from the phone, shrunk to receipt size, synced to every device.
+  Future<void> _pickLogo() async {
+    try {
+      final bytes = await const MethodChannel('brv/print').invokeMethod<Uint8List>('pickFile');
+      if (bytes == null) return;
+      final codec = await ui.instantiateImageCodec(bytes);
+      final src = (await codec.getNextFrame()).image;
+      final codec2 = src.width > 320 ? await ui.instantiateImageCodec(bytes, targetWidth: 320) : null;
+      final img = codec2 == null ? src : (await codec2.getNextFrame()).image;
+      final png = await img.toByteData(format: ui.ImageByteFormat.png);
+      if (png == null) throw 'not an image';
+      await st.set('receipt_logo', base64Encode(png.buffer.asUint8List()));
+      if (mounted) toast(context, 'Logo saved. It prints at the top of receipts.');
+    } catch (_) {
+      if (mounted) toast(context, 'Could not read that file. Choose a PNG or JPG picture.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final logo = st.get('receipt_logo');
     final sellLoc = int.tryParse(st.get('sell_location')) ?? 0;
     return Scaffold(
       appBar: AppBar(title: const Text('Business settings')),
@@ -57,6 +80,39 @@ class _BusinessSettingsState extends State<BusinessSettings> {
         listenable: st,
         builder: (context, _) => ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 24), children: [
           const Label('Business (printed on receipts)'),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: box(),
+            child: Row(children: [
+              Container(
+                width: 84,
+                height: 84,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: C.line)),
+                child: logo.isEmpty
+                    ? const Icon(Icons.image_outlined, size: 34, color: C.muted)
+                    : Padding(padding: const EdgeInsets.all(4), child: Image.memory(base64Decode(logo), fit: BoxFit.contain, gaplessPlayback: true)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Receipt logo', style: TextStyle(fontWeight: FontWeight.w800)),
+                  const Text('Printed at the top of every receipt. A dark logo on a white background prints best.',
+                      style: TextStyle(color: C.muted, fontSize: 12.5)),
+                  Wrap(spacing: 4, children: [
+                    TextButton.icon(onPressed: _pickLogo, icon: const Icon(Icons.upload_outlined), label: Text(logo.isEmpty ? 'Upload logo' : 'Change')),
+                    if (logo.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => st.set('receipt_logo', ''),
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Remove'),
+                      ),
+                  ]),
+                ]),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
           TextField(controller: _name, decoration: const InputDecoration(labelText: 'Business name')),
           const SizedBox(height: 10),
           TextField(controller: _phone, decoration: const InputDecoration(labelText: 'Phone')),
@@ -77,7 +133,7 @@ class _BusinessSettingsState extends State<BusinessSettings> {
             decoration: box(),
             child: Column(children: [
               SwitchListTile(value: st.vatRegistered, onChanged: (v) => st.setFlag('vat_registered', v), title: const Text('VAT registered'), subtitle: const Text('Prices include VAT; VAT is posted to the accounts.')),
-              SwitchListTile(value: st.requireShift, onChanged: (v) => st.setFlag('require_shift', v), title: const Text('Shift needed to sell'), subtitle: const Text('Cashiers open a shift (cash float) and close it with a cash count.')),
+              SwitchListTile(value: st.requireShift, onChanged: (v) => st.setFlag('require_shift', v), title: const Text('Session needed to sell'), subtitle: const Text('A session is opened with a cash float and closed with a cash count. Always on for BRV Pos Sales devices.')),
               SwitchListTile(value: st.blockNoStock, onChanged: (v) => st.setFlag('block_no_stock', v), title: const Text('Do not sell without stock'), subtitle: const Text('Unless the role has "Sell items that show no stock".')),
               SwitchListTile(value: st.printAfterSale, onChanged: (v) => st.setFlag('print_after_sale', v), title: const Text('Print the receipt after each sale')),
               ListTile(
@@ -101,7 +157,7 @@ class _BusinessSettingsState extends State<BusinessSettings> {
                 ),
               ),
               ListTile(
-                title: const Text('Sell from (when no shift)'),
+                title: const Text('Sell from (when no session)'),
                 trailing: DropdownButton<int>(
                   value: _locs.any((l) => n(l['id']) == sellLoc) ? sellLoc : null,
                   hint: const Text('First shop'),

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import '../bus.dart';
+import '../config.dart';
 import '../db.dart';
+import '../sales.dart';
+import '../sync.dart';
 import '../fmt.dart';
 import '../perms.dart';
 import '../session.dart';
@@ -15,16 +19,112 @@ class LockScreen extends StatefulWidget {
 
 class _LockScreenState extends State<LockScreen> {
   List<Map<String, Object?>> _users = [];
+  Map<String, Object?>? _session;
 
   @override
   void initState() {
     super.initState();
+    dataVersion.addListener(_load);
     _load();
   }
 
+  @override
+  void dispose() {
+    dataVersion.removeListener(_load);
+    super.dispose();
+  }
+
   Future<void> _load() async {
-    final u = await Db.q('SELECT u.id, u.name, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.active = 1 ORDER BY u.owner DESC, u.name');
-    if (mounted) setState(() => _users = u);
+    final all = await Db.q('SELECT u.id, u.name, u.owner, r.name AS role, r.perms FROM users u LEFT JOIN roles r ON r.id = u.role_id '
+        'WHERE u.active = 1 ORDER BY u.owner DESC, u.name');
+    final sess = isSalesApp ? await Session.openSession() : null;
+    if (mounted) {
+      setState(() {
+        _users = all.where(Session.allowedHere).toList();
+        _session = sess;
+      });
+    }
+  }
+
+  /// Sales device: open the terminal's session (cash drawer). A person allowed to open sessions types their PIN.
+  Future<void> _openSession() async {
+    final pin = await ask(context, 'Open session', label: 'PIN of the person opening the session', number: true);
+    if (pin == null || pin.trim().isEmpty || !mounted) return;
+    final u = await Session.userByPin(pin.trim(), right: P.shift);
+    if (u == null) {
+      if (mounted) toast(context, 'That PIN is not allowed to open sessions.');
+      return;
+    }
+    final locs = await Db.q("SELECT * FROM locations WHERE active = 1 ORDER BY kind = 'shop' DESC, name");
+    if (!mounted || locs.isEmpty) return;
+    var loc = n(locs.first['id']);
+    final def = int.tryParse(Settings.i.get('sell_location')) ?? 0;
+    if (locs.any((l) => n(l['id']) == def)) loc = def;
+    final float = TextEditingController(text: '0');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, set) => AlertDialog(
+          title: Text('Open session (${u['name']})'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              value: loc,
+              decoration: const InputDecoration(labelText: 'Selling from'),
+              items: [for (final l in locs) DropdownMenuItem(value: n(l['id']), child: Text(s(l['name'])))],
+              onChanged: (v) => set(() => loc = v ?? loc),
+            ),
+            const SizedBox(height: 10),
+            TextField(controller: float, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Cash in the drawer now (float)', prefixText: 'KSh ')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(minimumSize: const Size(0, 42)), child: const Text('Open')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Shifts.open(locationId: loc, openingCash: numIn(float.text) ?? 0, userId: n(u['id']));
+      changed();
+      await _load();
+      if (mounted) toast(context, 'Session open. Tap your name and sell.');
+    } on SaleError catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  Widget _sessionCard() {
+    final sess = _session;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.all(16),
+      decoration: box(color: sess == null ? C.amberLight : C.ink, border: false),
+      child: sess == null
+          ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                const Icon(Icons.lock_outline, color: C.amber),
+                const SizedBox(width: 10),
+                Expanded(child: Text('No session open on this terminal', style: h(16))),
+              ]),
+              const SizedBox(height: 4),
+              const Text('Open the session (count the float), then each cashier taps their name to sell.', style: muted),
+              const SizedBox(height: 12),
+              FilledButton.icon(onPressed: _openSession, icon: const Icon(Icons.lock_open), label: const Text('Open session')),
+            ])
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Icon(Icons.point_of_sale, color: C.gold),
+                const SizedBox(width: 10),
+                Expanded(child: Text('Session ${s(sess['number'])} open', style: h(16, color: Colors.white))),
+              ]),
+              const SizedBox(height: 4),
+              Text('Since ${dateText(sess['opened_at'])} · opened by ${s(sess['opener'])}', style: const TextStyle(color: Color(0xFFCBD5E1))),
+              const SizedBox(height: 6),
+              const Text('Continue selling: tap your name below and type your PIN.', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            ]),
+    );
   }
 
   Future<void> _pick(Map<String, Object?> u) async {
@@ -38,8 +138,10 @@ class _LockScreenState extends State<LockScreen> {
             Center(child: Image.asset('assets/brv_mark.png', height: 64)),
             const SizedBox(height: 12),
             Center(child: Text(Settings.i.businessName, style: h(24), textAlign: TextAlign.center)),
-            const Center(child: Text('Who is using the app?', style: muted)),
+            Center(child: Text(isManagerApp ? 'Managers: tap your name' : 'Who is selling?', style: muted)),
             const SizedBox(height: 22),
+            if (isSalesApp) _sessionCard(),
+            if (_users.isEmpty) const Empty(Icons.person_off_outlined, 'No user can sign in to this app yet.'),
             GridView.count(
               crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 3,
               shrinkWrap: true,
@@ -127,9 +229,23 @@ class _PinScreenState extends State<PinScreen> {
       builder: (ctx) => SimpleDialog(title: const Text('Forgot your PIN?'), children: [
         SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'manager'), child: const Padding(padding: EdgeInsets.all(6), child: Text('A manager resets it now (manager types their PIN)'))),
         SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'code'), child: const Padding(padding: EdgeInsets.all(6), child: Text('Owner: use the recovery code'))),
+        SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'brv'), child: const Padding(padding: EdgeInsets.all(6), child: Text('Ask BRV Integrated Systems to reset it'))),
       ]),
     );
     if (!mounted || choice == null) return;
+    if (choice == 'brv') {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Reset by BRV'),
+          content: const Text('Call BRV Integrated Systems. They set a new PIN from the BRV Licence app; the manager phone receives it '
+              'within a minute when it is online. Then sign in with the new PIN.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+      Sync.i.run();
+      return;
+    }
     if (choice == 'manager') {
       final p = await ask(context, 'Manager PIN', label: 'PIN of someone allowed to manage users', number: true);
       if (p == null || !mounted) return;

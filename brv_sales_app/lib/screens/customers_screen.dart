@@ -23,13 +23,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
   @override
   void initState() {
     super.initState();
-    dataVersion.addListener(_load);
+    dataSettled.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    dataVersion.removeListener(_load);
+    dataSettled.removeListener(_load);
     super.dispose();
   }
 

@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS records(
   rev BIGINT NOT NULL DEFAULT nextval('rev_seq'), device_id INT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(company_id, tbl, rid));
 CREATE INDEX IF NOT EXISTS records_rev ON records(company_id, rev);
+CREATE TABLE IF NOT EXISTS commands(
+  id SERIAL PRIMARY KEY, company_id INT NOT NULL, kind TEXT NOT NULL, payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), done_at TIMESTAMPTZ);
 """
 
 
@@ -224,13 +227,20 @@ def sync(body: dict = Body(...), authorization: str = Header(None)):
         if push and not co['seeded']:
             c.execute('UPDATE companies SET seeded = TRUE WHERE id = %s', (co['id'],))
             lic['seeded'] = True
+        for ack in body.get('acks') or []:
+            c.execute('UPDATE commands SET done_at = now() WHERE id = %s AND company_id = %s', (int(ack), d['company_id']))
+        commands = []
+        if d['role'] == 'manager':
+            commands = [{'id': r['id'], 'kind': r['kind'], **r['payload']} for r in c.execute(
+                'SELECT * FROM commands WHERE company_id = %s AND done_at IS NULL ORDER BY id', (d['company_id'],)).fetchall()]
         since = int(body.get('since') or 0)
         rows = c.execute('SELECT tbl, rid, data, deleted, rev, device_id FROM records WHERE company_id = %s AND rev > %s '
                          'ORDER BY rev LIMIT %s', (d['company_id'], since, PULL_LIMIT)).fetchall()
         cursor = rows[-1]['rev'] if rows else since
         pull = [{'tbl': r['tbl'], 'rid': r['rid'], 'data': r['data'], 'deleted': r['deleted']} for r in rows if r['device_id'] != d['id']]
         c.execute('UPDATE devices SET last_seen = now(), last_sync = now() WHERE id = %s', (d['id'],))
-        return {'ok': True, 'pull': pull, 'rev': cursor, 'more': len(rows) == PULL_LIMIT, 'pushed': len(push), 'licence': lic}
+        return {'ok': True, 'pull': pull, 'rev': cursor, 'more': len(rows) == PULL_LIMIT, 'pushed': len(push), 'licence': lic,
+                'commands': commands}
 
 
 # -----------------------------------------------------------------------------
@@ -343,6 +353,44 @@ def dev_device(did: int, body: dict = Body(...), x_dev_key: str = Header(None)):
                     return _err(400, 'Device limit reached. Raise the limit first.')
             c.execute("UPDATE devices SET active = %s, token_hash = CASE WHEN %s THEN token_hash ELSE '' END WHERE id = %s", (active, active, did))
         return {'ok': True, 'devices': _devices(c, d['company_id'])}
+
+
+@app.get('/api/dev/companies/{cid}/users')
+def dev_users(cid: int, x_dev_key: str = Header(None)):
+    """The company's users (as synced by its devices), to reset a forgotten PIN."""
+    _dev(x_dev_key)
+    with db() as c:
+        rows = c.execute("SELECT rid, data FROM records WHERE company_id = %s AND tbl = 'users' AND NOT deleted", (cid,)).fetchall()
+        roles = {r['rid']: (r['data'] or {}).get('name', '') for r in c.execute(
+            "SELECT rid, data FROM records WHERE company_id = %s AND tbl = 'roles' AND NOT deleted", (cid,)).fetchall()}
+        pending = [r['payload'].get('user_id') for r in c.execute(
+            "SELECT payload FROM commands WHERE company_id = %s AND kind = 'pin_reset' AND done_at IS NULL", (cid,)).fetchall()]
+        users = []
+        for r in rows:
+            u = r['data'] or {}
+            users.append({'id': u.get('id'), 'name': u.get('name', ''), 'owner': u.get('owner') == 1, 'active': u.get('active', 1) == 1,
+                          'role': 'Owner' if u.get('owner') == 1 else roles.get(str(u.get('role_id')), ''),
+                          'reset_pending': u.get('id') in pending})
+        users.sort(key=lambda u: (not u['owner'], u['name']))
+        return {'ok': True, 'users': users}
+
+
+@app.post('/api/dev/companies/{cid}/pin_reset')
+def dev_pin_reset(cid: int, body: dict = Body(...), x_dev_key: str = Header(None)):
+    """New PIN for a user: the company's manager phone applies it at its next sync."""
+    _dev(x_dev_key)
+    pin = str(body.get('pin', '')).strip()
+    if not pin.isdigit() or not 4 <= len(pin) <= 6:
+        return _err(400, 'The PIN must be 4 to 6 digits.')
+    uid = int(body.get('user_id') or 0)
+    with db() as c:
+        if not c.execute("SELECT 1 FROM records WHERE company_id = %s AND tbl = 'users' AND rid = %s", (cid, str(uid))).fetchone():
+            return _err(404, 'User not found.')
+        c.execute("UPDATE commands SET done_at = now() WHERE company_id = %s AND kind = 'pin_reset' AND done_at IS NULL "
+                  "AND payload->>'user_id' = %s", (cid, str(uid)))
+        c.execute("INSERT INTO commands(company_id, kind, payload) VALUES (%s, 'pin_reset', %s)",
+                  (cid, Jsonb({'user_id': uid, 'pin': pin})))
+        return {'ok': True}
 
 
 @app.get('/api/dev/waiting')

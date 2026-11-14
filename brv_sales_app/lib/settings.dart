@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'config.dart';
 import 'db.dart';
 import 'fmt.dart';
 
@@ -38,7 +39,7 @@ class Settings extends ChangeNotifier {
   String get receiptHeader => get('receipt_header');
   String get receiptFooter => get('receipt_footer', 'Thank you for your business!');
   bool get vatRegistered => flag('vat_registered', true);
-  bool get requireShift => flag('require_shift', true);
+  bool get requireShift => isSalesApp || flag('require_shift', true); // sales devices always sell inside a session
   bool get blockNoStock => flag('block_no_stock', true);
   bool get printAfterSale => flag('print_after_sale', true);
   int get paperMm => numVal('paper_mm', 58).toInt();
