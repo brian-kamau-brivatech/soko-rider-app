@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_users_form_utange" model="ir.ui.view">
+        <field name="name">res.users.form.utange</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='access_rights']" position="after">
+                <page string="Utange POS" name="utange_pos" invisible="share">
+                    <group>
+                        <group string="Approvals">
+                            <field name="utange_approver" widget="boolean_toggle"/>
+                        </group>
+                    </group>
+                    <div class="text-muted">
+                        <p>A person ticked here approves, for the Utange Odoo POS screen, the handheld and the Manager app:</p>
+                        <ul>
+                            <li>stock count differences at opening and closing (Odoo's stock is then corrected to the count);</li>
+                            <li>bar and kitchen requisitions from the main store.</li>
+                        </ul>
+                        <p>On the POS screen / handheld they type their <b>employee PIN</b> (Employees &gt; HR Settings &gt; PIN).
+                            In the Manager app and in Odoo they use this login. Ticking here also ticks their employee record.</p>
+                        <p>When nobody is ticked, Point of Sale administrators approve (as before).</p>
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_employee_form_utange" model="ir.ui.view">
+        <field name="name">hr.employee.form.utange</field>
+        <field name="model">hr.employee</field>
+        <field name="inherit_id" ref="hr.view_employee_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='pin']" position="after">
+                <field name="utange_approver" widget="boolean_toggle"
+                       help="This person's PIN approves stock count differences on the Utange POS screen and handheld."/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_users_tree_utange" model="ir.ui.view">
+        <field name="name">res.users.tree.utange</field>
+        <field name="model">res.users</field>
+        <field name="inherit_id" ref="base.view_users_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='login']" position="after">
+                <field name="utange_approver" optional="show" string="Utange approver"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

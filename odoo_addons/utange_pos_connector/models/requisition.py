@@ -36,6 +36,12 @@ class UtangeRequisition(models.Model):
     approved_by_id = fields.Many2one('res.users', 'Approved by', readonly=True, copy=False)
     approved_date = fields.Datetime(readonly=True, copy=False)
     item_count = fields.Integer(compute='_compute_item_count')
+    utange_can_approve = fields.Boolean(compute='_compute_can_approve')
+
+    def _compute_can_approve(self):
+        can = self.env.user._utange_can_approve()
+        for r in self:
+            r.utange_can_approve = can
 
     @api.onchange('config_id', 'point')
     def _onchange_point(self):
@@ -64,9 +70,8 @@ class UtangeRequisition(models.Model):
         return recs
 
     def _notify_managers(self):
-        group = self.env.ref('point_of_sale.group_pos_manager', raise_if_not_found=False)
-        users = group.users.filtered(lambda u: u.active and not u.share) if group else self.env['res.users']
-        users = users.filtered(lambda u: self.env.company in u.company_ids)[:5]
+        users = self.env['utange.stock.sheet']._approvers_to_notify()
+        users = users.filtered(lambda u: u.active and self.env.company in u.company_ids)[:8]
         todo = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
         for r in self:
             for u in users:
@@ -90,9 +95,9 @@ class UtangeRequisition(models.Model):
         return ptype
 
     def _check_approver(self):
-        u = self.env.user
-        if not (u.has_group('point_of_sale.group_pos_manager') or u.has_group('stock.group_stock_manager')):
-            raise UserError('Only a manager (Point of Sale or Inventory manager) can approve or reject requisitions.')
+        if not self.env.user._utange_can_approve():
+            raise UserError('You are not allowed to approve requisitions. '
+                            'Tick "Utange: can approve" on the user (Settings > Users).')
 
     def action_approve(self):
         self._check_approver()

@@ -20,8 +20,10 @@ class UtangeManagerApi(http.Controller):
 
     def _check(self):
         u = request.env.user
-        if not (u.has_group('point_of_sale.group_pos_manager') or u.has_group('stock.group_stock_manager')):
-            return {'ok': False, 'error': 'Only POS or Inventory managers can use the manager app.', 'denied': True}
+        if not (u.has_group('point_of_sale.group_pos_manager') or u.has_group('stock.group_stock_manager')
+                or u._utange_can_approve()):
+            return {'ok': False, 'error': 'Only POS or Inventory managers (or users ticked "Utange: can approve") '
+                                          'can use the manager app.', 'denied': True}
         return None
 
     def _local(self, rec, dt):
@@ -40,7 +42,7 @@ class UtangeManagerApi(http.Controller):
             return bad
         u = request.env.user
         return {'ok': True, 'name': u.name, 'company': request.env.company.name,
-                'approve': u.has_group('point_of_sale.group_pos_manager') or u.has_group('stock.group_stock_manager')}
+                'approve': u._utange_can_approve()}
 
     @http.route('/utange/mgr/dashboard', type='json', auth='user', methods=['POST'], csrf=False)
     def dashboard(self, **kw):
@@ -130,8 +132,8 @@ class UtangeManagerApi(http.Controller):
         bad = self._check()
         if bad:
             return bad
-        if not request.env.user.has_group('point_of_sale.group_pos_manager'):
-            return {'ok': False, 'error': 'Only a Point of Sale manager can approve count differences.'}
+        if not request.env.user._utange_can_approve():
+            return {'ok': False, 'error': 'You are not allowed to approve. Ask the admin to tick "Utange: can approve" on your user.'}
         s = request.env['utange.stock.sheet'].sudo().browse(int(sheet_id or 0)).exists()
         if not s or phase not in ('open', 'close') or action not in ('approve', 'reject'):
             return {'ok': False, 'error': 'Nothing to do.'}

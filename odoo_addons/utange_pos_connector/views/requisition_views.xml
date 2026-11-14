@@ -28,14 +28,14 @@
             <form>
                 <header>
                     <button name="action_approve" type="object" string="Approve and create transfer" class="btn-primary"
-                            invisible="state != 'submitted'" groups="point_of_sale.group_pos_manager,stock.group_stock_manager"/>
-                    <button name="action_reject" type="object" string="Reject" invisible="state not in ('submitted', 'approved')"
-                            groups="point_of_sale.group_pos_manager,stock.group_stock_manager"
+                            invisible="state != 'submitted' or not utange_can_approve"/>
+                    <button name="action_reject" type="object" string="Reject" invisible="state not in ('submitted', 'approved') or not utange_can_approve"
                             confirm="Reject this requisition?"/>
                     <button name="action_cancel" type="object" string="Cancel" invisible="state != 'submitted'"/>
                     <field name="state" widget="statusbar" statusbar_visible="submitted,approved,done"/>
                 </header>
                 <sheet>
+                    <field name="utange_can_approve" invisible="1"/>
                     <div class="oe_button_box" name="button_box">
                         <button name="action_view_picking" type="object" class="oe_stat_button" icon="fa-truck" invisible="not picking_id">
                             <field name="picking_id" widget="statinfo" string="Transfer"/>

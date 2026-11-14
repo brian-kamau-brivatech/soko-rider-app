@@ -40,15 +40,15 @@
                     <button name="action_reopen_close_count" type="object" string="Recount" invisible="state != 'closing' or not close_confirmed"/>
                     <button name="action_refresh" type="object" string="Refresh sales and transfers" invisible="state not in ('open', 'closing')"/>
                     <button name="action_approve_open" type="object" string="Approve opening differences" class="btn-success"
-                            invisible="open_approval != 'pending'" groups="point_of_sale.group_pos_manager"
+                            invisible="open_approval != 'pending' or not utange_can_approve"
                             confirm="Approve? Odoo's stock is corrected to the opening count."/>
                     <button name="action_reject_open" type="object" string="Reject opening differences"
-                            invisible="open_approval != 'pending'" groups="point_of_sale.group_pos_manager"/>
+                            invisible="open_approval != 'pending' or not utange_can_approve"/>
                     <button name="action_approve_close" type="object" string="Approve closing differences" class="btn-success"
-                            invisible="close_approval != 'pending'" groups="point_of_sale.group_pos_manager"
+                            invisible="close_approval != 'pending' or not utange_can_approve"
                             confirm="Approve? Odoo's stock is corrected to the closing count."/>
                     <button name="action_reject_close" type="object" string="Reject closing differences"
-                            invisible="close_approval != 'pending'" groups="point_of_sale.group_pos_manager"/>
+                            invisible="close_approval != 'pending' or not utange_can_approve"/>
                     <button name="action_print" type="object" string="Print"/>
                     <field name="state" widget="statusbar"/>
                 </header>
@@ -74,6 +74,7 @@
                             <field name="location_id"/>
                             <field name="opened_outside" invisible="1"/>
                             <field name="close_confirmed" invisible="1"/>
+                            <field name="utange_can_approve" invisible="1"/>
                         </group>
                         <group>
                             <field name="open_date"/>

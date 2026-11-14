@@ -36,6 +36,7 @@ class UtangeStockSheet(models.Model):
     open_user_id = fields.Many2one('res.users', 'Opening confirmed by (Odoo)', readonly=True)
     close_user_id = fields.Many2one('res.users', 'Closing confirmed by (Odoo)', readonly=True)
     note = fields.Text('Notes')
+    utange_can_approve = fields.Boolean(compute='_compute_can_approve')
     open_approval = fields.Selection(APPROVAL, 'Opening approval', default='none', readonly=True, tracking=True)
     close_approval = fields.Selection(APPROVAL, 'Closing approval', default='none', readonly=True, tracking=True)
     open_approved_by = fields.Char('Opening approved by', readonly=True)
@@ -55,6 +56,19 @@ class UtangeStockSheet(models.Model):
             s.close_diff_count = len(s.line_ids.filtered(lambda l: l.closed and not float_is_zero(l.close_diff, precision_digits=3)))
             s.amount_total = sum(s.line_ids.mapped('amount'))
             s.close_diff_value = sum(l.close_diff * l.price for l in s.line_ids if l.closed)
+
+    def _compute_can_approve(self):
+        can = self.env.user._utange_can_approve()
+        for s in self:
+            s.utange_can_approve = can
+
+    def _approvers_to_notify(self):
+        users = self.env['res.users'].sudo()
+        if users._utange_approvers_chosen():
+            chosen = users.search([('utange_approver', '=', True), ('share', '=', False)])
+            return chosen | self.env['hr.employee'].sudo().search([('utange_approver', '=', True)]).user_id
+        group = self.env.ref('point_of_sale.group_pos_manager', raise_if_not_found=False)
+        return group.users.filtered(lambda u: u.active and not u.share) if group else users
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -165,9 +179,8 @@ class UtangeStockSheet(models.Model):
             sheet._approve(phase, by)
             return 'approved'
         sheet.write({'%s_approval' % phase: 'pending'})
-        group = self.env.ref('point_of_sale.group_pos_manager', raise_if_not_found=False)
         todo = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
-        for u in (group.users.filtered(lambda u: u.active and not u.share)[:5] if group else []):
+        for u in sheet._approvers_to_notify()[:8]:
             try:
                 sheet.activity_schedule(activity_type_id=todo.id if todo else False, user_id=u.id,
                                         summary='Approve %s count %s: %d items' % (label.lower(), sheet.name, len(bad)),
@@ -197,8 +210,9 @@ class UtangeStockSheet(models.Model):
                                         in (a.summary or '')).action_feedback(feedback='Rejected by %s' % by)
 
     def _check_manager(self):
-        if not self.env.user.has_group('point_of_sale.group_pos_manager'):
-            raise UserError('Only a Point of Sale manager can approve or reject count differences.')
+        if not self.env.user._utange_can_approve():
+            raise UserError('You are not allowed to approve count differences. '
+                            'Tick "Utange: can approve" on the user (Settings > Users).')
 
     def action_approve_open(self):
         self._check_manager()
@@ -336,7 +350,7 @@ class UtangeStockSheet(models.Model):
                     l.system_open = l.product_id.with_context(location=l.location_id.id).qty_available
             s.write({'state': 'open', 'open_date': fields.Datetime.now(), 'open_user_id': self.env.user.id})
             s.message_post(body='Opening count confirmed in Odoo: %d differences.' % s.open_diff_count)
-            s._settle('open', self.env.user.name if self.env.user.has_group('point_of_sale.group_pos_manager') else None)
+            s._settle('open', self.env.user.name if self.env.user._utange_can_approve() else None)
         return True
 
     def action_start_close(self):
@@ -359,7 +373,7 @@ class UtangeStockSheet(models.Model):
             for l in s.line_ids:
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close), 'closed': True})
             s.write({'close_date': now, 'close_confirmed': True, 'close_user_id': self.env.user.id})
-            s._settle('close', self.env.user.name if self.env.user.has_group('point_of_sale.group_pos_manager') else None)
+            s._settle('close', self.env.user.name if self.env.user._utange_can_approve() else None)
             if not s.session_id or s.session_id.state == 'closed':
                 s.state = 'closed'
         return True

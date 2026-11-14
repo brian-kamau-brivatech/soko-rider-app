@@ -53,7 +53,11 @@ class PosSession(models.Model):
         emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists() if employee_id else False
         return emp or self.env.user.employee_id or None
 
-    def utange_open_lines(self):
+    def _utange_can_approve_now(self, employee_id):
+        emp = self._utange_employee(employee_id) if employee_id else None
+        return bool(self._utange_approver(emp, ''))
+
+    def utange_open_lines(self, employee_id=False):
         """Opening stock popup: {'needed': bool, 'lines': [...]}."""
         self.ensure_one()
         cfg = self.config_id
@@ -67,7 +71,8 @@ class PosSession(models.Model):
         if ready:
             ready.session_id = self.id
             return {'needed': False, 'sheet': ready.name}
-        return {'needed': True, 'lines': Sheet._opening_items(cfg), 'corrects': bool(cfg.utange_apply_open_count)}
+        return {'needed': True, 'lines': Sheet._opening_items(cfg), 'corrects': bool(cfg.utange_apply_open_count),
+                'can_approve': self._utange_can_approve_now(employee_id)}
 
     def _utange_approver(self, employee, manager_pin):
         """Who approves differences right now: a manager's PIN, or the signed-in cashier/user being a manager."""
@@ -93,7 +98,7 @@ class PosSession(models.Model):
             sheet._settle('open', by, note)
         return {'name': sheet.name, 'diffs': sheet.open_diff_count, 'approval': sheet.open_approval}
 
-    def utange_close_lines(self):
+    def utange_close_lines(self, employee_id=False):
         """Closing stock popup: {'needed': bool, 'lines': [...]} with the expected quantities."""
         self.ensure_one()
         cfg = self.config_id
@@ -104,7 +109,7 @@ class PosSession(models.Model):
         if sheet.close_confirmed:
             return {'needed': False, 'sheet': sheet.name}
         sheet._refresh_movements(until=fields.Datetime.now())
-        return {'needed': True, 'sheet': sheet.name, 'lines': [{
+        return {'needed': True, 'sheet': sheet.name, 'can_approve': self._utange_can_approve_now(employee_id), 'lines': [{
             'product_id': l.product_id.id, 'name': l.product_id.display_name, 'point': l.point or '',
             'uom': l.product_id.uom_id.name or '', 'opening': l.counted_open, 'received': l.received,
             'sent_out': l.sent_out, 'sold': l.sold, 'ref': l.expected_close} for l in sheet.line_ids]}

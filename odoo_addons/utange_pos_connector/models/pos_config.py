@@ -99,7 +99,13 @@ class PosConfig(models.Model):
     # Managers (approve count differences)
     # ------------------------------------------------------------------
     def _utange_managers(self):
+        """Employees whose PIN approves count differences. Chosen ones ("Utange: can approve" on the user or
+        employee) when any are ticked; otherwise POS administrators and "Advanced rights" employees."""
         self.ensure_one()
+        Emp = self.env['hr.employee'].sudo()
+        if self.env['res.users']._utange_approvers_chosen():
+            emps = Emp.search([('utange_approver', '=', True)]) | Emp.search([('user_id.utange_approver', '=', True)])
+            return emps.filtered(lambda e: not e.company_id or e.company_id == self.company_id)
         emps = self.sudo().advanced_employee_ids if 'advanced_employee_ids' in self._fields else self.env['hr.employee']
         group = self.sudo().group_pos_manager_id
         if group:
@@ -112,6 +118,8 @@ class PosConfig(models.Model):
         if employee:
             return employee in self._utange_managers()
         user = user or self.env.user
+        if self.env['res.users']._utange_approvers_chosen():
+            return user._utange_can_approve()
         return bool(self.sudo().group_pos_manager_id and user in self.sudo().group_pos_manager_id.users)
 
     def _utange_manager_by_pin(self, pin):

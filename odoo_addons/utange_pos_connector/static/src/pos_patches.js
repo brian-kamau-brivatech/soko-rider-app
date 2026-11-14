@@ -40,7 +40,7 @@ patch(PosStore.prototype, {
     async utangeOpeningCount() {
         let res;
         try {
-            res = await this.orm.call("pos.session", "utange_open_lines", [this.pos_session.id]);
+            res = await this.orm.call("pos.session", "utange_open_lines", [this.pos_session.id, this.utangeEmployeeId()]);
         } catch (e) {
             if (isOffline(e)) {
                 return true;
@@ -56,7 +56,7 @@ patch(PosStore.prototype, {
                 lines: res.lines,
                 corrects: res.corrects,
                 canCancel: true,
-                isManager: this.utangeIsManager(),
+                isManager: !!res.can_approve,
                 configId: this.config.id,
             });
             if (!confirmed) {
@@ -183,7 +183,7 @@ patch(ClosePosPopup.prototype, {
         if (!(await this.pos.push_orders_with_closing_popup())) {
             return false;
         }
-        const res = await this.orm.call("pos.session", "utange_close_lines", [this.pos.pos_session.id]);
+        const res = await this.orm.call("pos.session", "utange_close_lines", [this.pos.pos_session.id, this.pos.utangeEmployeeId()]);
         if (!res.needed) {
             return true;
         }
@@ -191,7 +191,7 @@ patch(ClosePosPopup.prototype, {
             phase: "close",
             lines: res.lines,
             canCancel: true,
-            isManager: this.pos.utangeIsManager(),
+            isManager: !!res.can_approve,
             configId: this.pos.config.id,
         });
         if (!confirmed) {

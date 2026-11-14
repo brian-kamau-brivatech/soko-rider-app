@@ -21,6 +21,7 @@ class _CountScreenState extends State<CountScreen> {
   String _q = '';
   bool _onlyLeft = false;
   String _point = '';
+  bool _canApprove = false; // the signed-in cashier is a chosen approver: no PIN step
   final Map<int, TextEditingController> _c = {};
 
   bool get _open => widget.phase == 'open';
@@ -48,6 +49,7 @@ class _CountScreenState extends State<CountScreen> {
       setState(() {
         _items = items;
         _location = ss(r['location']);
+        _canApprove = r['can_approve'] == true;
         for (final i in items) {
           _c.putIfAbsent(i.productId, () => TextEditingController());
         }
@@ -108,7 +110,7 @@ class _CountScreenState extends State<CountScreen> {
     );
     if (ok != true || !mounted) return;
     final counts = <Map<String, dynamic>>[for (final i in items) {'product_id': i.productId, 'qty': _val(i)}];
-    if (diffs.isEmpty || (Store.i.cashiersOn && Store.i.cashierRole == 'manager')) {
+    if (diffs.isEmpty || _canApprove) {
       Navigator.of(context).pop(<String, dynamic>{'counts': counts});
       return;
     }

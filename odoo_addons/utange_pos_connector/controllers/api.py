@@ -642,7 +642,8 @@ class UtangePosApi(http.Controller):
                       'opening': l.counted_open, 'received': l.received, 'sent_out': l.sent_out, 'sold': l.sold,
                       'expected': l.expected_close, 'price': l.price, 'point': l.point or '',
                       'categ': l.product_id.pos_categ_ids[:1].name or ''} for l in sheet.line_ids]
-            return {'ok': True, 'phase': 'close', 'sheet': sheet.name, 'location': self._points_text(config), 'items': items}
+            return {'ok': True, 'phase': 'close', 'sheet': sheet.name, 'location': self._points_text(config), 'items': items,
+                    'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp))}
         order = {'bar': 0, 'kitchen': 1}
         products = config._utange_sheet_products().sorted(
             lambda p: (order.get(p.product_tmpl_id._utange_point(), 2), p.display_name))
@@ -654,7 +655,8 @@ class UtangePosApi(http.Controller):
                   'point': config._utange_point_label(p.product_tmpl_id._utange_point()),
                   'price': Sheet._price_incl(p, config), 'categ': p.pos_categ_ids[:1].name or ''} for p in products]
         return {'ok': True, 'phase': 'open', 'location': self._points_text(config), 'items': items,
-                'last_sheet': last.name if last else ''}
+                'last_sheet': last.name if last else '',
+                'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp))}
 
     def _points_text(self, config):
         return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
@@ -664,7 +666,7 @@ class UtangePosApi(http.Controller):
         if manager_pin:
             mgr, err = config.sudo()._utange_manager_by_pin(manager_pin)
             return (mgr.name, None) if mgr else (None, err)
-        if emp and role == 'manager':
+        if emp and config.sudo()._utange_is_manager(employee=emp):
             return emp.name, None
         return None, None
 

@@ -17,7 +17,7 @@ else:
     <menuitem id="menu_utange_count" name="Count stock" parent="menu_utange_root" action="action_utange_count" sequence="0"/>
     <menuitem id="menu_utange_sheets" name="Shift stock sheets" parent="menu_utange_root" action="action_stock_sheet" sequence="1"/>
     <menuitem id="menu_utange_to_approve" name="Counts to approve" parent="menu_utange_root" action="action_sheet_to_approve"
-              sequence="1" groups="point_of_sale.group_pos_manager"/>
+              sequence="1"/>
     <menuitem id="menu_utange_variances" name="Stock variances" parent="menu_utange_root" action="action_sheet_variances" sequence="2"
               groups="point_of_sale.group_pos_manager"/>
     <menuitem id="menu_utange_requisitions" name="Requisitions" parent="menu_utange_root" action="action_requisition" sequence="5"/>
