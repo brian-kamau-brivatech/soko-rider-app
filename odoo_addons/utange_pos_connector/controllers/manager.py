@@ -74,6 +74,7 @@ class UtangeManagerApi(http.Controller):
             'shifts': shifts,
             'to_approve': Req.search_count([('state', '=', 'submitted')]),
             'to_issue': Req.search_count([('state', '=', 'approved')]),
+            'counts_to_approve': Sheet.search_count(['|', ('open_approval', '=', 'pending'), ('close_approval', '=', 'pending')]),
             'recent_sheets': [self._sheet_row(s) for s in recent],
         }
 
@@ -85,14 +86,18 @@ class UtangeManagerApi(http.Controller):
                 'state': s.state, 'opened': self._local(s, s.open_date), 'closed': self._local(s, s.close_date),
                 'by_open': s.open_employee_id.name or '', 'by_close': s.close_employee_id.name or '',
                 'open_diffs': s.open_diff_count, 'close_diffs': s.close_diff_count,
-                'sales': round(s.amount_total, 2), 'variance': round(s.close_diff_value, 2), 'outside': s.opened_outside}
+                'sales': round(s.amount_total, 2), 'variance': round(s.close_diff_value, 2), 'outside': s.opened_outside,
+                'open_approval': s.open_approval, 'close_approval': s.close_approval,
+                'open_approved_by': s.open_approved_by or '', 'close_approved_by': s.close_approved_by or '',
+                'open_reason': s.open_reason or '', 'close_reason': s.close_reason or ''}
 
     @http.route('/utange/mgr/sheets', type='json', auth='user', methods=['POST'], csrf=False)
     def sheets(self, only_diffs=False, **kw):
         bad = self._check()
         if bad:
             return bad
-        domain = [('close_diff_count', '>', 0)] if only_diffs else []
+        domain = ['|', '|', ('close_diff_count', '>', 0), ('open_approval', '=', 'pending'),
+                  ('close_approval', '=', 'pending')] if only_diffs else []
         recs = request.env['utange.stock.sheet'].sudo().search(domain, order='open_date desc', limit=60)
         return {'ok': True, 'sheets': [self._sheet_row(s) for s in recs]}
 
@@ -118,6 +123,30 @@ class UtangeManagerApi(http.Controller):
             'diff': l.close_diff if l.closed else None, 'on_hand': now_qty.get(l.product_id.id, 0.0),
         } for l in s.line_ids]
         return {'ok': True, 'sheet': data}
+
+    @http.route('/utange/mgr/sheet_action', type='json', auth='user', methods=['POST'], csrf=False)
+    def sheet_action(self, sheet_id=None, phase=None, action=None, **kw):
+        """Approve / reject the opening or closing count differences."""
+        bad = self._check()
+        if bad:
+            return bad
+        if not request.env.user.has_group('point_of_sale.group_pos_manager'):
+            return {'ok': False, 'error': 'Only a Point of Sale manager can approve count differences.'}
+        s = request.env['utange.stock.sheet'].sudo().browse(int(sheet_id or 0)).exists()
+        if not s or phase not in ('open', 'close') or action not in ('approve', 'reject'):
+            return {'ok': False, 'error': 'Nothing to do.'}
+        if s['%s_approval' % phase] != 'pending':
+            return {'ok': False, 'error': 'These differences are not waiting for approval.'}
+        try:
+            if action == 'approve':
+                s._approve(phase, request.env.user.name)
+            else:
+                s._reject(phase, request.env.user.name)
+        except Exception as e:
+            request.env.cr.rollback()
+            return {'ok': False, 'error': _err(e)}
+        return {'ok': True, 'message': '%s differences %s.' % ('Opening' if phase == 'open' else 'Closing',
+                                                               'approved: stock corrected' if action == 'approve' else 'rejected')}
 
     # ------------------------------------------------------------------
     # Requisitions

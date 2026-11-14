@@ -5,7 +5,8 @@ import '../idle.dart';
 import '../ui.dart';
 
 /// The stock sheet count: every item must get a number before the shift opens (phase 'open')
-/// or closes (phase 'close'). Returns [{product_id, qty}] or null when cancelled.
+/// or closes (phase 'close'). Returns {counts: [{product_id, qty}], reason, manager_pin?} or null when cancelled.
+/// Differences need a manager: a manager's PIN now, or "Send to manager" (approved later in the Manager app / Odoo).
 class CountScreen extends StatefulWidget {
   final String phase; // open | close
   const CountScreen({super.key, required this.phase});
@@ -106,7 +107,22 @@ class _CountScreenState extends State<CountScreen> {
       ),
     );
     if (ok != true || !mounted) return;
-    Navigator.of(context).pop(<Map<String, dynamic>>[for (final i in items) {'product_id': i.productId, 'qty': _val(i)}]);
+    final counts = <Map<String, dynamic>>[for (final i in items) {'product_id': i.productId, 'qty': _val(i)}];
+    if (diffs.isEmpty || (Store.i.cashiersOn && Store.i.cashierRole == 'manager')) {
+      Navigator.of(context).pop(<String, dynamic>{'counts': counts});
+      return;
+    }
+    final approval = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ApprovalDialog(diffCount: diffs.length),
+    );
+    if (approval == null || !mounted) return;
+    Navigator.of(context).pop(<String, dynamic>{
+      'counts': counts,
+      'reason': approval['reason'] ?? '',
+      if ((approval['pin'] ?? '').isNotEmpty) 'manager_pin': approval['pin'],
+    });
   }
 
   @override
@@ -143,8 +159,9 @@ class _CountScreenState extends State<CountScreen> {
               const SizedBox(height: 8),
               Text(
                 _open
-                    ? 'Count what is really on the shelf and type it. "System" is what Odoo has.'
-                    : 'Count what is left and type it. "Expected" = opening + received − sold.',
+                    ? 'Count what is really on the shelf and type it. "System" is what Odoo has. Differences need a manager.'
+                    : 'Type what is remaining. Balance = Opening + In − Out − Sold (In/Out = requisitions and transfers). '
+                        'Differences need a manager.',
                 style: const TextStyle(color: C.muted, fontSize: 12.5),
               ),
               const SizedBox(height: 8),
@@ -245,8 +262,7 @@ class _CountScreenState extends State<CountScreen> {
               (i.point.isEmpty ? '' : '${i.point} · ') +
               (_open
                   ? 'System ${qty(i.system)}${i.lastClose != null ? ' · last close ${qty(i.lastClose!)}' : ''}'
-                  : 'Open ${qty(i.opening)}${i.received > 0 ? ' + in ${qty(i.received)}' : ''}'
-                      '${i.sentOut > 0 ? ' − out ${qty(i.sentOut)}' : ''} − sold ${qty(i.sold)} = expected ${qty(i.expected)}'),
+                  : 'Opening ${qty(i.opening)} · In +${qty(i.received)} · Out −${qty(i.sentOut)} · Sold ${qty(i.sold)} → Balance ${qty(i.expected)}'),
               style: const TextStyle(color: C.muted, fontSize: 12.5),
             ),
             if (bad)
@@ -275,6 +291,91 @@ class _CountScreenState extends State<CountScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Differences found: a manager approves now with their PIN, or the count is sent to the manager.
+class _ApprovalDialog extends StatefulWidget {
+  final int diffCount;
+  const _ApprovalDialog({required this.diffCount});
+  @override
+  State<_ApprovalDialog> createState() => _ApprovalDialogState();
+}
+
+class _ApprovalDialogState extends State<_ApprovalDialog> {
+  final _reason = TextEditingController();
+  final _pin = TextEditingController();
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    _pin.dispose();
+    super.dispose();
+  }
+
+  bool get _reasonOk => _reason.text.trim().length >= 3;
+
+  Future<void> _approve() async {
+    if (!_reasonOk || _pin.text.trim().isEmpty) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final r = await Api.call('/utange/pos/check_manager_pin', Store.i.base({'manager_pin': _pin.text.trim()}));
+      if (!mounted) return;
+      if (r['ok'] == true) {
+        Navigator.pop(context, {'reason': _reason.text.trim(), 'pin': _pin.text.trim()});
+      } else {
+        setState(() => _error = ss(r['error']).isEmpty ? 'Wrong manager PIN.' : ss(r['error']));
+      }
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Manager approval'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${widget.diffCount} items differ. Odoo\'s stock only changes when a manager approves.'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _reason,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'Reason (e.g. 1 soda broken)'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _pin,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(labelText: 'Manager PIN (manager is here)', errorText: _error),
+          ),
+          const SizedBox(height: 8),
+          const Text('No manager here? Send to manager: the manager approves or rejects in the Manager app or Odoo.',
+              style: TextStyle(color: C.muted, fontSize: 12.5)),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Recount')),
+        TextButton(
+          onPressed: _reasonOk && !_busy ? () => Navigator.pop(context, {'reason': _reason.text.trim(), 'pin': ''}) : null,
+          child: const Text('Send to manager'),
+        ),
+        FilledButton(
+          onPressed: _reasonOk && _pin.text.trim().isNotEmpty && !_busy ? _approve : null,
+          child: const Text('Approve'),
+        ),
+      ],
     );
   }
 }

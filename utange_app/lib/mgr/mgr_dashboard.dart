@@ -101,6 +101,7 @@ class _MgrDashboardState extends State<MgrDashboard> {
     final recent = ll(d['recent_sheets']).map(SheetRow.fromJson).toList();
     final toApprove = ii(d['to_approve']);
     final toIssue = ii(d['to_issue']);
+    final counts = ii(d['counts_to_approve']);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 14, 16, 24), children: [
       Container(
         padding: const EdgeInsets.all(16),
@@ -130,6 +131,24 @@ class _MgrDashboardState extends State<MgrDashboard> {
           onTap: () => mgrTab.value = 1,
         ),
       ),
+      if (counts > 0) ...[
+        const SizedBox(height: 10),
+        Material(
+          color: C.amberLight,
+          borderRadius: BorderRadius.circular(18),
+          child: ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: C.line)),
+            leading: const Icon(Icons.fact_check_rounded, color: C.amber, size: 30),
+            title: Text('$counts stock count${counts == 1 ? '' : 's'} to approve', style: h(16)),
+            subtitle: const Text('Opening / closing differences typed by the cashiers'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {
+              mgrSheetsIssues = true;
+              mgrTab.value = 2;
+            },
+          ),
+        ),
+      ],
       const SizedBox(height: 16),
       Text('Open shifts', style: h(17)),
       const SizedBox(height: 8),

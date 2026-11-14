@@ -15,6 +15,10 @@
                 <field name="open_diff_count" string="Opening diffs"/>
                 <field name="close_diff_count" string="Closing diffs"/>
                 <field name="close_diff_value" sum="Variance"/>
+                <field name="open_approval" widget="badge" optional="show" decoration-warning="open_approval == 'pending'"
+                       decoration-success="open_approval == 'approved'" decoration-danger="open_approval == 'rejected'"/>
+                <field name="close_approval" widget="badge" optional="show" decoration-warning="close_approval == 'pending'"
+                       decoration-success="close_approval == 'approved'" decoration-danger="close_approval == 'rejected'"/>
                 <field name="amount_total" sum="Sales"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="state" widget="badge" decoration-success="state == 'closed'" decoration-info="state == 'open'"/>
@@ -35,6 +39,16 @@
                             invisible="state != 'closing' or close_confirmed" confirm="Confirm the closing stock as counted? Differences are sent to the managers."/>
                     <button name="action_reopen_close_count" type="object" string="Recount" invisible="state != 'closing' or not close_confirmed"/>
                     <button name="action_refresh" type="object" string="Refresh sales and transfers" invisible="state not in ('open', 'closing')"/>
+                    <button name="action_approve_open" type="object" string="Approve opening differences" class="btn-success"
+                            invisible="open_approval != 'pending'" groups="point_of_sale.group_pos_manager"
+                            confirm="Approve? Odoo's stock is corrected to the opening count."/>
+                    <button name="action_reject_open" type="object" string="Reject opening differences"
+                            invisible="open_approval != 'pending'" groups="point_of_sale.group_pos_manager"/>
+                    <button name="action_approve_close" type="object" string="Approve closing differences" class="btn-success"
+                            invisible="close_approval != 'pending'" groups="point_of_sale.group_pos_manager"
+                            confirm="Approve? Odoo's stock is corrected to the closing count."/>
+                    <button name="action_reject_close" type="object" string="Reject closing differences"
+                            invisible="close_approval != 'pending'" groups="point_of_sale.group_pos_manager"/>
                     <button name="action_print" type="object" string="Print"/>
                     <field name="state" widget="statusbar"/>
                 </header>
@@ -45,6 +59,10 @@
                     </div>
                     <div class="alert alert-info" role="alert" invisible="state != 'closing' or close_confirmed">
                         Closing count: type what is left in <b>Closing</b> (it starts with the expected figure), then <b>Confirm closing count</b>.
+                    </div>
+                    <div class="alert alert-warning" role="alert" invisible="open_approval != 'pending' and close_approval != 'pending'">
+                        Count differences are waiting for a manager. Approving corrects Odoo's stock to the count;
+                        rejecting keeps Odoo's stock and leaves the difference on this shift.
                     </div>
                     <div class="alert alert-warning" role="alert" invisible="not opened_outside">
                         The session was opened without a count on the handheld: the opening figures are worked out by Odoo.
@@ -67,7 +85,13 @@
                     <group>
                         <group>
                             <field name="open_diff_count"/>
+                            <field name="open_approval"/>
+                            <field name="open_approved_by" invisible="not open_approved_by"/>
+                            <field name="open_reason" invisible="not open_reason"/>
                             <field name="close_diff_count"/>
+                            <field name="close_approval"/>
+                            <field name="close_approved_by" invisible="not close_approved_by"/>
+                            <field name="close_reason" invisible="not close_reason"/>
                         </group>
                         <group>
                             <field name="amount_total"/>
@@ -121,6 +145,7 @@
                 <field name="open_employee_id"/>
                 <filter name="open" string="Open shifts" domain="[('state', '=', 'open')]"/>
                 <filter name="variance" string="With closing differences" domain="[('close_diff_count', '&gt;', 0)]"/>
+                <filter name="to_approve" string="Waiting for manager" domain="['|', ('open_approval', '=', 'pending'), ('close_approval', '=', 'pending')]"/>
                 <separator/>
                 <filter name="today" string="Today" domain="[('open_date', '&gt;=', (context_today()).strftime('%Y-%m-%d'))]"/>
                 <group expand="0" string="Group By">
@@ -165,5 +190,12 @@
         <field name="view_mode">tree</field>
         <field name="domain">[('closed', '=', True), ('close_diff', '!=', 0)]</field>
         <field name="context">{'group_by': 'product_id'}</field>
+    </record>
+
+    <record id="action_sheet_to_approve" model="ir.actions.act_window">
+        <field name="name">Counts to approve</field>
+        <field name="res_model">utange.stock.sheet</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'search_default_to_approve': 1}</field>
     </record>
 </odoo>

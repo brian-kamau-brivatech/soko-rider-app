@@ -473,6 +473,13 @@ class SheetRow {
   final bool outside;
   final String location;
   final List<Map<String, dynamic>> lines;
+  final String openApproval; // none | pending | approved | rejected
+  final String closeApproval;
+  final String openApprovedBy;
+  final String closeApprovedBy;
+  final String openReason;
+  final String closeReason;
+  bool get waiting => openApproval == 'pending' || closeApproval == 'pending';
   SheetRow.fromJson(Map<String, dynamic> j)
       : id = ii(j['id']),
         name = ss(j['name']),
@@ -489,5 +496,11 @@ class SheetRow {
         variance = dd(j['variance']),
         outside = j['outside'] == true,
         location = ss(j['location']),
-        lines = ll(j['lines']);
+        lines = ll(j['lines']),
+        openApproval = ss(j['open_approval']),
+        closeApproval = ss(j['close_approval']),
+        openApprovedBy = ss(j['open_approved_by']),
+        closeApprovedBy = ss(j['close_approved_by']),
+        openReason = ss(j['open_reason']),
+        closeReason = ss(j['close_reason']);
 }

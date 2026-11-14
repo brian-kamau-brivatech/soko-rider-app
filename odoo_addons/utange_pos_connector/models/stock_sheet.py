@@ -1,5 +1,10 @@
 from odoo import api, fields, models
+from odoo.exceptions import UserError
 from odoo.tools import float_is_zero
+
+APPROVAL = [('none', 'No differences'), ('pending', 'Waiting for manager'),
+            ('approved', 'Approved'), ('rejected', 'Rejected')]
+ADJ_NAME = 'Utange stock count'
 
 
 class UtangeStockSheet(models.Model):
@@ -31,6 +36,12 @@ class UtangeStockSheet(models.Model):
     open_user_id = fields.Many2one('res.users', 'Opening confirmed by (Odoo)', readonly=True)
     close_user_id = fields.Many2one('res.users', 'Closing confirmed by (Odoo)', readonly=True)
     note = fields.Text('Notes')
+    open_approval = fields.Selection(APPROVAL, 'Opening approval', default='none', readonly=True, tracking=True)
+    close_approval = fields.Selection(APPROVAL, 'Closing approval', default='none', readonly=True, tracking=True)
+    open_approved_by = fields.Char('Opening approved by', readonly=True)
+    close_approved_by = fields.Char('Closing approved by', readonly=True)
+    open_reason = fields.Char('Opening reason', readonly=True)
+    close_reason = fields.Char('Closing reason', readonly=True)
     open_diff_count = fields.Integer('Opening differences', compute='_compute_totals', store=True)
     close_diff_count = fields.Integer('Closing differences', compute='_compute_totals', store=True)
     amount_total = fields.Monetary('Sales', compute='_compute_totals', store=True)
@@ -75,6 +86,137 @@ class UtangeStockSheet(models.Model):
         return out
 
     @api.model
+    def _opening_items(self, config):
+        order = {'bar': 0, 'kitchen': 1}
+        products = config._utange_sheet_products().sorted(
+            lambda p: (order.get(p.product_tmpl_id._utange_point(), 2), p.display_name))
+        on_hand = self._on_hand_for(config, products)
+        last = self.search([('config_id', '=', config.id), ('state', '=', 'closed')], order='close_date desc, id desc', limit=1)
+        last_count = {l.product_id.id: l.counted_close for l in last.line_ids if l.closed} if last else {}
+        return [{'product_id': p.id, 'name': p.display_name, 'uom': p.uom_id.name or '',
+                 'point': config._utange_point_label(p.product_tmpl_id._utange_point()),
+                 'ref': on_hand.get(p.id, (None, 0.0))[1], 'last_close': last_count.get(p.id)} for p in products]
+
+    def _adjust_stock(self, phase):
+        """Approved differences: the stock at each line's location is moved by the difference
+        (opening: counted - Odoo; closing: counted - expected), so Odoo matches the shelf."""
+        Move = self.env['stock.move'].sudo()
+        for sheet in self.sudo():
+            if not sheet.config_id.utange_apply_open_count:
+                continue
+            later = self.search([('config_id', '=', sheet.config_id.id), ('id', '>', sheet.id), ('state', '!=', 'draft')], limit=1)
+            if later:
+                # a newer count (e.g. the next shift's opening) already set the real figures: do not correct twice
+                sheet.message_post(body='Approved without changing the stock: the newer count %s already '
+                                        'reflects the shelf.' % later.name)
+                continue
+            done = []
+            for l in sheet.line_ids:
+                if phase == 'close' and not l.closed:
+                    continue
+                diff = (l.counted_open - l.system_open) if phase == 'open' else (l.counted_close - l.expected_close)
+                if float_is_zero(diff, precision_digits=4) or not l.location_id or l.product_id.type != 'product':
+                    continue
+                p = l.product_id
+                inv = p.with_company(sheet.company_id).property_stock_inventory
+                if not inv:
+                    continue
+                src, dst = (inv, l.location_id) if diff > 0 else (l.location_id, inv)
+                m = Move.create({
+                    'name': '%s %s' % (ADJ_NAME, sheet.name), 'origin': sheet.name, 'product_id': p.id,
+                    'product_uom': p.uom_id.id, 'product_uom_qty': abs(diff), 'location_id': src.id,
+                    'location_dest_id': dst.id, 'company_id': sheet.company_id.id, 'is_inventory': True,
+                })
+                m._action_confirm()
+                m.quantity = abs(diff)
+                m.picked = True
+                m._action_done()
+                done.append('%s %+g' % (p.display_name, diff))
+            if done:
+                sheet.message_post(body='Stock corrected to the %s count: %s.' % (
+                    'opening' if phase == 'open' else 'closing', ', '.join(done)))
+
+    # ------------------------------------------------------------------
+    # Manager approval of count differences
+    # ------------------------------------------------------------------
+    def _diff_text(self, phase):
+        self.ensure_one()
+        if phase == 'open':
+            bad = self.line_ids.filtered(lambda l: not float_is_zero(l.open_diff, precision_digits=3))
+            return bad, ', '.join('%s %+g' % (l.product_id.display_name, l.open_diff) for l in bad[:15])
+        bad = self.line_ids.filtered(lambda l: l.closed and not float_is_zero(l.close_diff, precision_digits=3))
+        return bad, ', '.join('%s %+g' % (l.product_id.display_name, l.close_diff) for l in bad[:15])
+
+    def _settle(self, phase, by=None, reason=''):
+        """After a count: no differences -> nothing to approve; a manager there (PIN / signed in as manager)
+        -> approved now; else waiting for a manager (Manager app or Odoo). Returns the approval state."""
+        self.ensure_one()
+        sheet = self.sudo()
+        bad, text = sheet._diff_text(phase)
+        reason = (reason or '').strip()[:250]
+        sheet.write({'%s_reason' % phase: reason})
+        if not bad:
+            sheet.write({'%s_approval' % phase: 'none'})
+            return 'none'
+        label = 'Opening' if phase == 'open' else 'Closing'
+        extra = ' Value at selling price: %.0f.' % sheet.close_diff_value if phase == 'close' else ''
+        sheet.message_post(body='%s differences: %s.%s%s' % (label, text, extra, (' Reason: %s' % reason) if reason else ''))
+        if by:
+            sheet._approve(phase, by)
+            return 'approved'
+        sheet.write({'%s_approval' % phase: 'pending'})
+        group = self.env.ref('point_of_sale.group_pos_manager', raise_if_not_found=False)
+        todo = self.env.ref('mail.mail_activity_data_todo', raise_if_not_found=False)
+        for u in (group.users.filtered(lambda u: u.active and not u.share)[:5] if group else []):
+            try:
+                sheet.activity_schedule(activity_type_id=todo.id if todo else False, user_id=u.id,
+                                        summary='Approve %s count %s: %d items' % (label.lower(), sheet.name, len(bad)),
+                                        note=text + ((' - ' + reason) if reason else ''))
+            except Exception:
+                pass
+        return 'pending'
+
+    def _approve(self, phase, by):
+        for sheet in self.sudo():
+            if sheet['%s_approval' % phase] == 'approved':
+                continue
+            sheet._adjust_stock(phase)
+            sheet.write({'%s_approval' % phase: 'approved', '%s_approved_by' % phase: by})
+            sheet.message_post(body='%s differences approved by %s.' % ('Opening' if phase == 'open' else 'Closing', by))
+            sheet.activity_ids.filtered(lambda a: ('%s count' % ('opening' if phase == 'open' else 'closing'))
+                                        in (a.summary or '')).action_feedback(feedback='Approved by %s' % by)
+
+    def _reject(self, phase, by):
+        for sheet in self.sudo():
+            if sheet['%s_approval' % phase] != 'pending':
+                continue
+            sheet.write({'%s_approval' % phase: 'rejected', '%s_approved_by' % phase: by})
+            sheet.message_post(body='%s differences rejected by %s: Odoo stock not changed; the difference stays on this shift.'
+                                    % ('Opening' if phase == 'open' else 'Closing', by))
+            sheet.activity_ids.filtered(lambda a: ('%s count' % ('opening' if phase == 'open' else 'closing'))
+                                        in (a.summary or '')).action_feedback(feedback='Rejected by %s' % by)
+
+    def _check_manager(self):
+        if not self.env.user.has_group('point_of_sale.group_pos_manager'):
+            raise UserError('Only a Point of Sale manager can approve or reject count differences.')
+
+    def action_approve_open(self):
+        self._check_manager()
+        self.filtered(lambda s: s.open_approval == 'pending')._approve('open', self.env.user.name)
+
+    def action_reject_open(self):
+        self._check_manager()
+        self._reject('open', self.env.user.name)
+
+    def action_approve_close(self):
+        self._check_manager()
+        self.filtered(lambda s: s.close_approval == 'pending')._approve('close', self.env.user.name)
+
+    def action_reject_close(self):
+        self._check_manager()
+        self._reject('close', self.env.user.name)
+
+    @api.model
     def _done_qty(self, move):
         qty = move.quantity if 'quantity' in move._fields else move.quantity_done
         return move.product_uom._compute_quantity(qty, move.product_id.uom_id) if move.product_uom else qty
@@ -97,7 +239,8 @@ class UtangeStockSheet(models.Model):
                 for pl in pos_lines:
                     sold[pl.product_id.id] = sold.get(pl.product_id.id, 0.0) + pl.qty
                     amount[pl.product_id.id] = amount.get(pl.product_id.id, 0.0) + pl.price_subtotal_incl
-            dom = [('state', '=', 'done'), ('date', '>=', sheet.open_date), ('date', '<=', until)]
+            dom = [('state', '=', 'done'), ('date', '>=', sheet.open_date), ('date', '<=', until),
+                   ('name', 'not like', ADJ_NAME)]
             pos_type = sheet.config_id.picking_type_id
             if pos_type:
                 dom.append(('picking_type_id', '!=', pos_type.id))
@@ -163,7 +306,6 @@ class UtangeStockSheet(models.Model):
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close) if counts else l.expected_close,
                          'closed': True})
             sheet.write({'close_date': now, 'close_employee_id': employee.id if employee else False, 'close_confirmed': True})
-            sheet._notify_variance()
 
     def _notify_variance(self):
         """Closing differences: a to-do for the POS managers and a note on the sheet."""
@@ -189,10 +331,12 @@ class UtangeStockSheet(models.Model):
         for s in self:
             if s.state != 'draft':
                 continue
+            for l in s.line_ids:  # what Odoo has right now
+                if l.location_id:
+                    l.system_open = l.product_id.with_context(location=l.location_id.id).qty_available
             s.write({'state': 'open', 'open_date': fields.Datetime.now(), 'open_user_id': self.env.user.id})
             s.message_post(body='Opening count confirmed in Odoo: %d differences.' % s.open_diff_count)
-            if s.session_id and s.session_id.state == 'opened':
-                pass
+            s._settle('open', self.env.user.name if self.env.user.has_group('point_of_sale.group_pos_manager') else None)
         return True
 
     def action_start_close(self):
@@ -215,14 +359,17 @@ class UtangeStockSheet(models.Model):
             for l in s.line_ids:
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close), 'closed': True})
             s.write({'close_date': now, 'close_confirmed': True, 'close_user_id': self.env.user.id})
-            s._notify_variance()
+            s._settle('close', self.env.user.name if self.env.user.has_group('point_of_sale.group_pos_manager') else None)
             if not s.session_id or s.session_id.state == 'closed':
                 s.state = 'closed'
         return True
 
     def action_reopen_close_count(self):
         for s in self.filtered(lambda x: x.state == 'closing' and x.close_confirmed and x.session_id.state != 'closed'):
-            s.write({'close_confirmed': False})
+            if s.close_approval == 'approved':
+                raise UserError('The closing differences were already approved and the stock corrected; it cannot be recounted.')
+            s.activity_ids.filtered(lambda a: 'closing count' in (a.summary or '')).unlink()
+            s.write({'close_confirmed': False, 'close_approval': 'none'})
             s.line_ids.write({'closed': False})
         return True
 

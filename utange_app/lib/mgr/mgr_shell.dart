@@ -8,6 +8,9 @@ import 'mgr_sheets.dart';
 
 final ValueNotifier<int> mgrTab = ValueNotifier<int>(0);
 
+/// Set before switching to the Sheets tab to show only sheets with differences / waiting for approval.
+bool mgrSheetsIssues = false;
+
 class MgrShell extends StatelessWidget {
   const MgrShell({super.key});
   @override

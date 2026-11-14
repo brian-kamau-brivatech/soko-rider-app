@@ -38,6 +38,7 @@
                     </p>
                     <group string="Rules">
                         <field name="utange_block_zero"/>
+                        <field name="utange_apply_open_count"/>
                         <field name="utange_auto_issue"/>
                         <field name="utange_require_sheet"/>
                         <field name="utange_count_at_close"/>

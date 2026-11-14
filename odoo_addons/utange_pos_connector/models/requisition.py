@@ -89,7 +89,13 @@ class UtangeRequisition(models.Model):
             raise UserError('No internal transfer operation type found. Enable Storage Locations in Inventory settings.')
         return ptype
 
+    def _check_approver(self):
+        u = self.env.user
+        if not (u.has_group('point_of_sale.group_pos_manager') or u.has_group('stock.group_stock_manager')):
+            raise UserError('Only a manager (Point of Sale or Inventory manager) can approve or reject requisitions.')
+
     def action_approve(self):
+        self._check_approver()
         for r in self:
             if r.state != 'submitted':
                 raise UserError('%s is not waiting for approval.' % r.name)
@@ -149,6 +155,7 @@ class UtangeRequisition(models.Model):
             ('<br/>Short: ' + '; '.join(short)) if short else ''))
 
     def action_reject(self):
+        self._check_approver()
         for r in self:
             if r.state not in ('submitted', 'approved'):
                 raise UserError('%s cannot be rejected now.' % r.name)

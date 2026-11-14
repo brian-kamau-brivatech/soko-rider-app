@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates id="template" xml:space="preserve">
+    <t t-name="utange_pos_connector.UtangeStockPopup">
+        <div class="popup utange-stock-popup d-flex flex-column text-start" style="max-width: 980px; width: 97vw; max-height: 93vh;">
+            <div class="modal-header">
+                <h4 class="modal-title" t-esc="state.stage === 'approve' ? 'Manager approval needed' : (isOpen ? 'Opening stock - check and confirm' : 'Closing stock - count and confirm')"/>
+            </div>
+
+            <!-- ========== count ========== -->
+            <t t-if="state.stage === 'count'">
+                <div class="px-3 pt-2 pb-1 border-bottom">
+                    <div class="text-muted small mb-2">
+                        <t t-if="isOpen">"Odoo" is what Odoo has now. If the shelf has a different number, type the real one.</t>
+                        <t t-else="">Balance = Opening + In − Out − Sold (In/Out = requisitions and transfers during the shift).
+                            Type what is really remaining.</t>
+                        A manager approves any difference before Odoo's stock changes.
+                    </div>
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <input class="form-control" style="max-width: 240px;" placeholder="Search item" t-model="state.q"/>
+                        <select t-if="points.length > 1" class="form-select" style="max-width: 160px;" t-model="state.point">
+                            <option value="">Bar and kitchen</option>
+                            <t t-foreach="points" t-as="p" t-key="p"><option t-att-value="p" t-esc="p"/></t>
+                        </select>
+                        <label class="d-flex align-items-center gap-1 ms-1">
+                            <input type="checkbox" t-model="state.onlyDiff"/> Only differences
+                        </label>
+                        <span class="ms-auto fw-bold" t-att-class="diffRows.length ? 'text-danger' : 'text-success'"
+                              t-esc="diffRows.length ? diffRows.length + ' different' : 'All match'"/>
+                    </div>
+                </div>
+                <main class="modal-body p-0" style="overflow-y: auto; flex: 1 1 auto; min-height: 200px;">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                            <tr>
+                                <th class="ps-3 text-start">Item</th>
+                                <t t-if="isOpen">
+                                    <th class="text-end">Last close</th>
+                                    <th class="text-end">Odoo</th>
+                                </t>
+                                <t t-else="">
+                                    <th class="text-end">Opening</th>
+                                    <th class="text-end">In</th>
+                                    <th class="text-end">Out</th>
+                                    <th class="text-end">Sold</th>
+                                    <th class="text-end">Balance</th>
+                                </t>
+                                <th class="text-center" style="width: 170px;" t-esc="isOpen ? 'Counted' : 'Remaining'"/>
+                                <th class="text-end pe-3" style="width: 70px;">Diff</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="shown" t-as="r" t-key="r.product_id" t-att-class="hasDiff(r) ? 'table-warning' : ''">
+                                <td class="ps-3 text-start">
+                                    <div class="fw-bold" t-esc="r.name"/>
+                                    <div class="text-muted small" t-esc="r.point"/>
+                                </td>
+                                <t t-if="isOpen">
+                                    <td class="text-end text-muted" t-esc="r.last_close !== null and r.last_close !== undefined ? fmt(r.last_close) : '—'"/>
+                                    <td class="text-end fw-bold" t-esc="fmt(r.ref)"/>
+                                </t>
+                                <t t-else="">
+                                    <td class="text-end" t-esc="fmt(r.opening)"/>
+                                    <td class="text-end text-success" t-esc="r.received ? '+' + fmt(r.received) : '0'"/>
+                                    <td class="text-end text-danger" t-esc="r.sent_out ? '−' + fmt(r.sent_out) : '0'"/>
+                                    <td class="text-end" t-esc="fmt(r.sold)"/>
+                                    <td class="text-end fw-bold" t-esc="fmt(r.ref)"/>
+                                </t>
+                                <td>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" t-on-click="() => this.step(r, -1)">−</button>
+                                        <input class="form-control text-center fw-bold" inputmode="decimal" t-model="r.counted"
+                                               t-att-class="num(r.counted) === null ? 'is-invalid' : ''"/>
+                                        <button class="btn btn-outline-secondary" t-on-click="() => this.step(r, 1)">+</button>
+                                    </div>
+                                </td>
+                                <td class="text-end pe-3 fw-bold">
+                                    <t t-if="hasDiff(r)">
+                                        <a href="#" t-att-class="diff(r) &lt; 0 ? 'text-danger' : 'text-primary'" title="Back to the Odoo figure"
+                                           t-on-click.prevent="() => this.reset(r)" t-esc="signed(diff(r))"/>
+                                    </t>
+                                </td>
+                            </tr>
+                            <tr t-if="!shown.length"><td colspan="8" class="text-center text-muted p-4">
+                                <t t-if="state.rows.length">Nothing matches.</t>
+                                <t t-else="">No stock-tracked items. In Odoo set the drinks to Product Type = Storable.</t>
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </main>
+                <div class="px-3 py-2 border-top">
+                    <input class="form-control" t-model="state.note"
+                           t-att-placeholder="diffRows.length ? 'Reason for the differences (e.g. 1 soda broken)' : 'Note (optional)'"/>
+                </div>
+                <footer class="footer modal-footer">
+                    <button t-if="props.canCancel" class="button btn btn-lg btn-secondary" t-on-click="cancel">Back</button>
+                    <button class="button btn btn-lg btn-primary" t-on-click="confirm" t-att-disabled="!valid">
+                        <t t-esc="isOpen ? 'Confirm opening stock' : 'Confirm closing stock'"/>
+                        <t t-if="diffRows.length"> (<t t-esc="diffRows.length"/> different)</t>
+                    </button>
+                </footer>
+            </t>
+
+            <!-- ========== manager approval ========== -->
+            <t t-else="">
+                <main class="modal-body" style="overflow-y: auto;">
+                    <p class="mb-2">These items differ from <t t-esc="isOpen ? 'what Odoo has' : 'the balance'"/>.
+                        Odoo's stock only changes when a manager approves.</p>
+                    <table class="table table-sm mb-3">
+                        <tr t-foreach="diffRows" t-as="r" t-key="r.product_id">
+                            <td class="text-start" t-esc="r.name"/>
+                            <td class="text-end text-muted"><t t-esc="isOpen ? 'Odoo' : 'Balance'"/> <t t-esc="fmt(r.ref)"/></td>
+                            <td class="text-end">counted <b t-esc="fmt(num(r.counted))"/></td>
+                            <td class="text-end fw-bold" t-att-class="diff(r) &lt; 0 ? 'text-danger' : 'text-primary'" t-esc="signed(diff(r))"/>
+                        </tr>
+                    </table>
+                    <label class="form-label fw-bold">Reason</label>
+                    <input class="form-control mb-3" t-model="state.note" placeholder="e.g. 1 soda broken"
+                           t-att-class="reasonOk ? '' : 'is-invalid'"/>
+                    <label class="form-label fw-bold">Manager PIN (manager is here)</label>
+                    <input class="form-control" type="password" inputmode="numeric" autocomplete="off" t-model="state.pin"
+                           t-on-keyup="(ev) => ev.key === 'Enter' and this.approveWithPin()"/>
+                    <div class="text-danger small mt-1" t-if="state.pinError" t-esc="state.pinError"/>
+                    <div class="text-muted small mt-2">No manager here? "Send to manager": the shift goes on, and the manager approves or
+                        rejects later in the Manager app or in Odoo (Point of Sale &gt; Handheld &gt; Counts to approve).</div>
+                </main>
+                <footer class="footer modal-footer">
+                    <button class="button btn btn-lg btn-secondary" t-on-click="backToCount">Recount</button>
+                    <button class="button btn btn-lg btn-light border" t-on-click="sendToManager" t-att-disabled="!reasonOk">Send to manager</button>
+                    <button class="button btn btn-lg btn-primary" t-on-click="approveWithPin"
+                            t-att-disabled="!reasonOk or !state.pin.trim() or state.busy">Approve with PIN</button>
+                </footer>
+            </t>
+        </div>
+    </t>
+</templates>

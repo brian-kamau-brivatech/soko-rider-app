@@ -1,5 +1,15 @@
-from odoo import _, models
+from odoo import _, fields, models
 from odoo.exceptions import UserError
+
+
+def _counts(counts):
+    out = {}
+    for c in counts or []:
+        try:
+            out[int(c.get('product_id'))] = float(c.get('qty'))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return out
 
 
 class PosSession(models.Model):
@@ -29,15 +39,89 @@ class PosSession(models.Model):
                 "In Odoo: Point of Sale > Handheld > Count stock > Confirm opening count.\n"
                 "Then open the session again."))
 
-    def action_pos_session_open(self):
-        # Without cash control Odoo opens the session at once: check now.
-        self.filtered(lambda s: s.state == 'opening_control' and not (s.config_id.cash_control and not s.rescue)) \
-            ._utange_check_open()
-        return super().action_pos_session_open()
+    # Without cash control Odoo opens the session as soon as it is created; the POS screen then
+    # shows the stock count popup before anything can be sold (static/src/pos_patches.js).
 
     def set_cashbox_pos(self, cashbox_value, notes):
         self._utange_check_open()
         return super().set_cashbox_pos(cashbox_value, notes)
+
+    # ------------------------------------------------------------------
+    # Called by the Odoo POS screen (popups)
+    # ------------------------------------------------------------------
+    def _utange_employee(self, employee_id):
+        emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists() if employee_id else False
+        return emp or self.env.user.employee_id or None
+
+    def utange_open_lines(self):
+        """Opening stock popup: {'needed': bool, 'lines': [...]}."""
+        self.ensure_one()
+        cfg = self.config_id
+        if self.rescue or not cfg.utange_require_sheet or self.state == 'closed':
+            return {'needed': False}
+        if self._utange_sheet():
+            return {'needed': False}
+        Sheet = self.env['utange.stock.sheet'].sudo()
+        ready = Sheet.search([('config_id', '=', cfg.id), ('session_id', '=', False), ('state', '=', 'open')],
+                             order='id desc', limit=1)
+        if ready:
+            ready.session_id = self.id
+            return {'needed': False, 'sheet': ready.name}
+        return {'needed': True, 'lines': Sheet._opening_items(cfg), 'corrects': bool(cfg.utange_apply_open_count)}
+
+    def _utange_approver(self, employee, manager_pin):
+        """Who approves differences right now: a manager's PIN, or the signed-in cashier/user being a manager."""
+        cfg = self.config_id
+        if manager_pin:
+            mgr, err = cfg._utange_manager_by_pin(manager_pin)
+            if not mgr:
+                raise UserError(err)
+            return mgr.name
+        if employee and cfg.module_pos_hr:
+            return employee.name if cfg._utange_is_manager(employee=employee) else None
+        return self.env.user.name if cfg._utange_is_manager(user=self.env.user) else None
+
+    def utange_confirm_open(self, counts, note='', employee_id=False, manager_pin=''):
+        self.ensure_one()
+        sheet = self._utange_sheet()
+        if not sheet:
+            emp = self._utange_employee(employee_id)
+            by = self._utange_approver(emp, manager_pin)
+            sheet = self.env['utange.stock.sheet'].sudo()._start(self.config_id, self, _counts(counts), employee=emp)
+            sheet.open_user_id = self.env.uid
+            sheet.message_post(body='Opening stock confirmed on the Odoo POS screen%s.' % ((' by %s' % emp.name) if emp else ''))
+            sheet._settle('open', by, note)
+        return {'name': sheet.name, 'diffs': sheet.open_diff_count, 'approval': sheet.open_approval}
+
+    def utange_close_lines(self):
+        """Closing stock popup: {'needed': bool, 'lines': [...]} with the expected quantities."""
+        self.ensure_one()
+        cfg = self.config_id
+        if self.rescue or not cfg.utange_count_at_close:
+            return {'needed': False}
+        Sheet = self.env['utange.stock.sheet'].sudo()
+        sheet = self._utange_sheet() or Sheet._start(cfg, self, {}, outside=True)
+        if sheet.close_confirmed:
+            return {'needed': False, 'sheet': sheet.name}
+        sheet._refresh_movements(until=fields.Datetime.now())
+        return {'needed': True, 'sheet': sheet.name, 'lines': [{
+            'product_id': l.product_id.id, 'name': l.product_id.display_name, 'point': l.point or '',
+            'uom': l.product_id.uom_id.name or '', 'opening': l.counted_open, 'received': l.received,
+            'sent_out': l.sent_out, 'sold': l.sold, 'ref': l.expected_close} for l in sheet.line_ids]}
+
+    def utange_confirm_close(self, counts, note='', employee_id=False, manager_pin=''):
+        self.ensure_one()
+        Sheet = self.env['utange.stock.sheet'].sudo()
+        sheet = self._utange_sheet() or Sheet._start(self.config_id, self, {}, outside=True)
+        if not sheet.close_confirmed:
+            emp = self._utange_employee(employee_id)
+            by = self._utange_approver(emp, manager_pin)
+            sheet._finish(_counts(counts), employee=emp)
+            sheet.write({'close_user_id': self.env.uid, 'state': 'closing'})
+            sheet.message_post(body='Closing stock confirmed on the Odoo POS screen%s.' % ((' by %s' % emp.name) if emp else ''))
+            sheet._settle('close', by, note)
+        return {'name': sheet.name, 'diffs': sheet.close_diff_count, 'value': sheet.close_diff_value,
+                'approval': sheet.close_approval}
 
     def _cannot_close_session(self, bank_payment_method_diffs=None):
         res = super()._cannot_close_session(bank_payment_method_diffs)

@@ -659,6 +659,23 @@ class UtangePosApi(http.Controller):
     def _points_text(self, config):
         return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
 
+    def _approver(self, config, emp, role, manager_pin):
+        """(name or None, error): a manager's PIN typed now, or the signed-in cashier being a manager."""
+        if manager_pin:
+            mgr, err = config.sudo()._utange_manager_by_pin(manager_pin)
+            return (mgr.name, None) if mgr else (None, err)
+        if emp and role == 'manager':
+            return emp.name, None
+        return None, None
+
+    @http.route('/utange/pos/check_manager_pin', type='json', auth='public', methods=['POST'], csrf=False)
+    def check_manager_pin(self, pin=None, config_id=None, cashier=None, manager_pin=None, **kw):
+        config, emp, role, bad = self._guard(pin, config_id, cashier)
+        if bad:
+            return bad
+        mgr, err = config.sudo()._utange_manager_by_pin(manager_pin)
+        return {'ok': bool(mgr), 'name': mgr.name if mgr else '', 'error': err or ''}
+
     def _ready_sheet(self, config):
         """An opening count confirmed in Odoo (or earlier on a handheld) waiting for its session."""
         return request.env['utange.stock.sheet'].sudo().search(
@@ -674,7 +691,8 @@ class UtangePosApi(http.Controller):
         return out
 
     @http.route('/utange/pos/session_open', type='json', auth='public', methods=['POST'], csrf=False)
-    def session_open(self, pin=None, config_id=None, cashier=None, opening_cash=None, notes=None, counts=None, **kw):
+    def session_open(self, pin=None, config_id=None, cashier=None, opening_cash=None, notes=None, counts=None,
+                     manager_pin=None, reason=None, **kw):
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
@@ -693,10 +711,16 @@ class UtangePosApi(http.Controller):
             if missing:
                 return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
                     len(missing), ', '.join(missing[:3].mapped('display_name'))), 'count_required': True}
+        by, err = self._approver(config, emp, role, manager_pin)
+        if err:
+            return {'ok': False, 'error': err, 'manager_pin': True}
         env = self._as_pos_user(config, session)
         try:
             # The confirmed sheet exists first, so Odoo lets the session open (see pos_session.py).
-            sheet = ready or Sheet._start(config, None, counted, employee=emp)
+            sheet = ready
+            if not sheet:
+                sheet = Sheet._start(config, None, counted, employee=emp)
+                sheet._settle('open', by, reason)
             cfg = env['pos.config'].browse(config.id)
             if not session:
                 cfg._check_before_creating_new_session()
@@ -713,11 +737,19 @@ class UtangePosApi(http.Controller):
             return {'ok': False, 'error': _err(e)}
         self._log_as(session, emp, 'Shift opened on the Utange handheld%s. Stock sheet %s (%d opening differences).'
                      % (by, sheet.name, sheet.open_diff_count))
-        return {'ok': True, 'message': '%s is open. Stock sheet %s saved.' % (session.name, sheet.name),
-                'info': self._session_info(config, emp, role)}
+        return {'ok': True, 'message': '%s is open. Stock sheet %s saved.%s' % (
+                    session.name, sheet.name, self._approval_text(sheet.open_approval, sheet.open_approved_by)),
+                'approval': sheet.open_approval, 'info': self._session_info(config, emp, role)}
+
+    def _approval_text(self, state, by):
+        if state == 'pending':
+            return ' Differences sent to the manager for approval.'
+        if state == 'approved':
+            return ' Differences approved by %s.' % by
+        return ''
 
     @http.route('/utange/pos/sheet_confirm_open', type='json', auth='public', methods=['POST'], csrf=False)
-    def sheet_confirm_open(self, pin=None, config_id=None, cashier=None, counts=None, **kw):
+    def sheet_confirm_open(self, pin=None, config_id=None, cashier=None, counts=None, manager_pin=None, reason=None, **kw):
         """The shift was opened in Odoo (POS screen): the cashier counts and confirms the opening stock now."""
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
@@ -734,9 +766,13 @@ class UtangePosApi(http.Controller):
         if missing:
             return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
                 len(missing), ', '.join(missing[:3].mapped('display_name'))), 'count_required': True}
+        by, err = self._approver(config, emp, role, manager_pin)
+        if err:
+            return {'ok': False, 'error': err, 'manager_pin': True}
         sheet = request.env['utange.stock.sheet'].sudo()._start(config, session, counted, employee=emp)
         sheet.message_post(body='Shift opened in Odoo; opening stock counted on the handheld%s.'
                                 % ((' by %s' % emp.name) if emp else ''))
+        sheet._settle('open', by, reason)
         return {'ok': True, 'message': 'Opening stock confirmed: %s (%d differences).' % (sheet.name, sheet.open_diff_count),
                 'info': self._session_info(config, emp, role)}
 
@@ -766,7 +802,8 @@ class UtangePosApi(http.Controller):
                 'info': self._session_info(config, emp, role)}
 
     @http.route('/utange/pos/session_close', type='json', auth='public', methods=['POST'], csrf=False)
-    def session_close(self, pin=None, config_id=None, cashier=None, counted_cash=None, notes=None, counts=None, **kw):
+    def session_close(self, pin=None, config_id=None, cashier=None, counted_cash=None, notes=None, counts=None,
+                      manager_pin=None, reason=None, **kw):
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
@@ -800,9 +837,13 @@ class UtangePosApi(http.Controller):
             if limit is not None and abs(diff) > limit + 0.001:
                 return {'ok': False, 'error': 'Cash difference KSh %.0f is more than the KSh %.0f allowed. '
                                               'Recount, or a manager closes it in Odoo.' % (diff, limit)}
+        by, err = self._approver(config, emp, role, manager_pin)
+        if err:
+            return {'ok': False, 'error': err, 'manager_pin': True}
         # 1) the closing count is saved first (kept even if Odoo cannot close the session)
         if not done_in_odoo:
             sheet._finish(counted, employee=emp)
+            sheet._settle('close', by, reason)
         request.env.cr.commit()
         env = self._as_pos_user(config, live)
         session = env['pos.session'].browse(live.id)
@@ -828,7 +869,9 @@ class UtangePosApi(http.Controller):
                      % (by, sheet.name, sheet.close_diff_count))
         short = [{'name': l.product_id.display_name, 'diff': l.close_diff}
                  for l in sheet.line_ids if l.closed and abs(l.close_diff) > 0.0001][:30]
-        return {'ok': True, 'message': '%s is closed.' % closed.name,
+        return {'ok': True, 'message': '%s is closed.%s' % (
+                    closed.name, self._approval_text(sheet.close_approval, sheet.close_approved_by)),
+                'approval': sheet.close_approval,
                 'summary': {'name': closed.name, 'orders': closing.get('orders', 0), 'amount': closing.get('amount', 0),
                             'cash_expected': cash['expected'] if cash else None,
                             'cash_counted': closed.cash_register_balance_end_real if cash else None,

@@ -67,16 +67,16 @@ class _ShiftScreenState extends State<ShiftScreen> {
       toast(context, 'Enter the opening cash in the drawer.');
       return;
     }
-    List<Map<String, dynamic>>? counts;
+    Map<String, dynamic>? counts;
     if (i.requireSheet && i.sheetReady.isEmpty) {
       counts = await Navigator.of(context)
-          .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
+          .push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
       if (counts == null || !mounted) return;
     }
     setState(() => _busy = true);
     try {
       final r = await Api.call('/utange/pos/session_open',
-          Store.i.base({'opening_cash': cash, 'notes': _notes.text.trim(), if (counts != null) 'counts': counts}));
+          Store.i.base({'opening_cash': cash, 'notes': _notes.text.trim(), ...?counts}));
       if (!mounted) return;
       setState(() {
         _info = SessionInfo.fromJson(Map<String, dynamic>.from(r['info'] as Map));
@@ -99,10 +99,10 @@ class _ShiftScreenState extends State<ShiftScreen> {
       toast(context, 'Count the cash in the drawer and enter it.');
       return;
     }
-    List<Map<String, dynamic>>? counts;
+    Map<String, dynamic>? counts;
     if (i.countAtClose && !i.closeReady) {
       counts = await Navigator.of(context)
-          .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'close')));
+          .push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'close')));
       if (counts == null || !mounted) return;
     }
     final diff = c.hasCash ? counted! - c.cashExpected : 0.0;
@@ -133,7 +133,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
       final r = await Api.call('/utange/pos/session_close', Store.i.base({
         if (c.hasCash) 'counted_cash': counted,
         'notes': _notes.text.trim(),
-        if (counts != null) 'counts': counts,
+        ...?counts,
       }));
       if (!mounted) return;
       final s = Map<String, dynamic>.from(r['summary'] as Map? ?? const {});
@@ -170,11 +170,11 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
   Future<void> _confirmOpening() async {
     final counts = await Navigator.of(context)
-        .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
+        .push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
     if (counts == null || !mounted) return;
     setState(() => _busy = true);
     try {
-      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base({'counts': counts}));
+      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base(counts));
       if (!mounted) return;
       setState(() => _info = SessionInfo.fromJson(Map<String, dynamic>.from(r['info'] as Map)));
       toast(context, ss(r['message']));

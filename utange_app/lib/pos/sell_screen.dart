@@ -119,10 +119,10 @@ class _SellScreenState extends State<SellScreen> {
   /// The shift was opened in Odoo: count and confirm the opening stock before selling.
   Future<void> _confirmOpening() async {
     final counts = await Navigator.of(context)
-        .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
+        .push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
     if (counts == null || !mounted) return;
     try {
-      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base({'counts': counts}));
+      final r = await Api.call('/utange/pos/sheet_confirm_open', Store.i.base(counts));
       if (mounted) toast(context, ss(r['message']));
     } on ApiError catch (e) {
       if (mounted) toast(context, e.message);

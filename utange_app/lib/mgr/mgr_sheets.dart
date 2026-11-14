@@ -30,7 +30,12 @@ class _MgrSheetsState extends State<MgrSheets> {
   }
 
   void _onTab() {
-    if (mgrTab.value == 2) _load();
+    if (mgrTab.value != 2) return;
+    if (mgrSheetsIssues) {
+      mgrSheetsIssues = false;
+      setState(() => _onlyDiffs = true);
+    }
+    _load();
   }
 
   Future<void> _load() async {
@@ -62,7 +67,7 @@ class _MgrSheetsState extends State<MgrSheets> {
           SegmentedButton<bool>(
             segments: const [
               ButtonSegment(value: false, label: Text('All shifts')),
-              ButtonSegment(value: true, label: Text('With differences'), icon: Icon(Icons.warning_amber_rounded)),
+              ButtonSegment(value: true, label: Text('Differences / approve'), icon: Icon(Icons.warning_amber_rounded)),
             ],
             selected: {_onlyDiffs},
             showSelectedIcon: false,
@@ -101,13 +106,18 @@ class SheetTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: bad ? C.red : C.line, width: bad ? 1.4 : 1),
+        border: Border.all(color: s.waiting ? C.amber : (bad ? C.red : C.line), width: bad || s.waiting ? 1.4 : 1),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
         title: Row(children: [
           Expanded(child: Text('${s.name} · ${s.config}', style: h(14.5))),
-          if (open) const Pill('OPEN') else if (bad) Pill('${s.closeDiffs} DIFF', fg: C.red, bg: C.redLight),
+          if (s.waiting)
+            const Pill('APPROVE', fg: C.amber, bg: C.amberLight)
+          else if (open)
+            const Pill('OPEN')
+          else if (bad)
+            Pill('${s.closeDiffs} DIFF', fg: C.red, bg: C.redLight),
         ]),
         subtitle: Text([
           '${s.opened.length >= 16 ? s.opened.substring(0, 16) : s.opened}${s.closed.isEmpty ? '' : ' → ${s.closed.length >= 16 ? s.closed.substring(11, 16) : s.closed}'}',
@@ -155,6 +165,85 @@ class _SheetDetailState extends State<SheetDetail> {
     }
   }
 
+  Future<void> _act(String phase, String action) async {
+    final s = _s!;
+    final label = phase == 'open' ? 'opening' : 'closing';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(action == 'approve' ? 'Approve $label differences?' : 'Reject $label differences?'),
+        content: Text(action == 'approve'
+            ? 'Odoo\'s stock is corrected to what was counted.'
+            : 'Odoo\'s stock stays as it is; the difference stays on this shift (${s.name}).'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: action == 'approve' ? C.green : C.red),
+            child: Text(action == 'approve' ? 'Approve' : 'Reject'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final r = await Api.call('/utange/mgr/sheet_action', {'sheet_id': s.id, 'phase': phase, 'action': action});
+      if (mounted) toast(context, ss(r['message']));
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+      await Store.i.handle(e);
+    }
+    _load();
+  }
+
+  Widget _approvalCard(SheetRow s, String phase) {
+    final state = phase == 'open' ? s.openApproval : s.closeApproval;
+    if (state.isEmpty || state == 'none') return const SizedBox.shrink();
+    final by = phase == 'open' ? s.openApprovedBy : s.closeApprovedBy;
+    final reason = phase == 'open' ? s.openReason : s.closeReason;
+    final n = phase == 'open' ? s.openDiffs : s.closeDiffs;
+    final label = phase == 'open' ? 'Opening' : 'Closing';
+    final pending = state == 'pending';
+    final color = pending ? C.amber : (state == 'approved' ? C.green : C.red);
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color, width: 1.4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('$label count: $n difference${n == 1 ? '' : 's'}', style: h(15)),
+        if (reason.isNotEmpty) Text('Reason: $reason', style: const TextStyle(color: C.muted)),
+        Text(
+          pending ? 'Waiting for your approval' : '${state == 'approved' ? 'Approved' : 'Rejected'} by $by',
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+        if (pending) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => _act(phase, 'reject'),
+                style: OutlinedButton.styleFrom(foregroundColor: C.red, minimumSize: const Size(0, 46)),
+                child: const Text('Reject'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => _act(phase, 'approve'),
+                style: FilledButton.styleFrom(backgroundColor: C.green, minimumSize: const Size(0, 46)),
+                child: const Text('Approve'),
+              ),
+            ),
+          ]),
+        ],
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _s;
@@ -199,6 +288,8 @@ class _SheetDetailState extends State<SheetDetail> {
           ],
         ]),
       ),
+      _approvalCard(s, 'open'),
+      _approvalCard(s, 'close'),
       const SizedBox(height: 12),
       Row(children: [
         Expanded(
@@ -260,13 +351,14 @@ class _SheetDetailState extends State<SheetDetail> {
         const SizedBox(height: 6),
         Row(children: [
           cell('Opening', qty(dd(l['opening']))),
-          cell('In', qty(dd(l['received']))),
+          cell('In', '+${qty(dd(l['received']))}', color: C.green),
+          cell('Out', '−${qty(dd(l['sent_out']))}', color: C.red),
           cell('Sold', qty(dd(l['sold']))),
-          cell('Expected', qty(dd(l['expected']))),
+          cell('Balance', qty(dd(l['expected']))),
           if (open)
             cell('On hand', qty(dd(l['on_hand'])))
           else
-            cell('Closing', diff == null ? '—' : qty(dd(l['closing']))),
+            cell('Remaining', diff == null ? '—' : qty(dd(l['closing']))),
           if (!open) cell('Diff', diff == null ? '' : signed(diff), color: bad ? C.red : (diff != null && diff > 0.0001 ? C.amber : C.green)),
         ]),
       ]),
