@@ -1,0 +1,100 @@
+name: Build BRV Pos Sales
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'brv_sales_app/**'
+      - 'brv_pos/android_overrides/**'
+      - '.github/workflows/build_brv_sales.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brv_sales_app
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Generate Android project
+        run: |
+          flutter create --platforms=android --org=ke.co.brivatech --project-name=brv_pos_sales .
+          rm -rf test
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image
+          icon = Image.open("assets/app_icon.png").convert("RGB")
+          for d, s in [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]:
+              icon.resize((s, s), Image.LANCZOS).save("android/app/src/main/res/mipmap-%s/ic_launcher.png" % d)
+          print("BRV Pos Sales launcher icons made")
+          PY
+          python3 android_overrides/patch_native.py
+
+      - name: Fixed debug key for the GitHub APK
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            mkdir -p "$HOME/.android"
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$HOME/.android/debug.keystore"
+          fi
+
+      - run: flutter pub get
+
+      - name: Check the code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Install Android NDK (with retries)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for i in 1 2 3 4; do
+            rm -rf "$ANDROID_HOME/ndk/27.0.12077973"
+            if yes | "$SDKM" --install "ndk;27.0.12077973" > /tmp/ndk.log 2>&1 \
+               && [ -f "$ANDROID_HOME/ndk/27.0.12077973/source.properties" ]; then
+              echo "NDK installed"; exit 0
+            fi
+            echo "NDK download failed (try $i), retrying"; tail -5 /tmp/ndk.log; sleep 15
+          done
+          exit 1
+
+      - name: Build APKs (light 64-bit + 32-bit for older handhelds)
+        run: |
+          flutter build apk --release --split-per-abi --target-platform android-arm64,android-arm \
+            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }}
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk BRV-Pos-Sales-64bit.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk BRV-Pos-Sales-32bit.apk
+          ls -lh *.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BRV-Pos-Sales
+          path: brv_sales_app/BRV-Pos-Sales-*.apk
+
+      - name: Release with downloadable APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: brv-sales-v1.0.${{ github.run_number }}
+          name: "BRV Pos Sales v1.0.${{ github.run_number }}"
+          body: "BRV Pos Sales: offline point of sale with users and PINs, roles and rights, shifts, stock per location, requisitions, purchases, customers on credit, expenses, double-entry accounting, reports and an owner dashboard. Download -64bit.apk (most phones and handhelds); use -32bit.apk only if the 64-bit one says it is not compatible. Guide: brv_sales_app/README.md."
+          files: |
+            brv_sales_app/BRV-Pos-Sales-64bit.apk
+            brv_sales_app/BRV-Pos-Sales-32bit.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
