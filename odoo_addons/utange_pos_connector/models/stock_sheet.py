@@ -17,7 +17,8 @@ class UtangeStockSheet(models.Model):
     location_id = fields.Many2one('stock.location', 'Stock location', required=True, readonly=True)
     company_id = fields.Many2one('res.company', default=lambda s: s.env.company, readonly=True)
     currency_id = fields.Many2one(related='company_id.currency_id')
-    state = fields.Selection([('open', 'Shift open'), ('closed', 'Closed')], default='open',
+    state = fields.Selection([('draft', 'Opening count'), ('open', 'Shift open'), ('closing', 'Closing count'),
+                              ('closed', 'Closed')], default='open',
                              required=True, tracking=True, readonly=True)
     open_date = fields.Datetime('Opened', readonly=True, default=fields.Datetime.now)
     close_date = fields.Datetime('Closed', readonly=True)
@@ -25,7 +26,10 @@ class UtangeStockSheet(models.Model):
     close_employee_id = fields.Many2one('hr.employee', 'Closing count by', readonly=True)
     opened_outside = fields.Boolean('Opened outside the handheld', readonly=True,
                                     help='The session was opened without a count; the opening figures are worked out by Odoo.')
-    line_ids = fields.One2many('utange.stock.sheet.line', 'sheet_id', 'Items', readonly=True)
+    line_ids = fields.One2many('utange.stock.sheet.line', 'sheet_id', 'Items')
+    close_confirmed = fields.Boolean('Closing count confirmed', readonly=True, copy=False)
+    open_user_id = fields.Many2one('res.users', 'Opening confirmed by (Odoo)', readonly=True)
+    close_user_id = fields.Many2one('res.users', 'Closing confirmed by (Odoo)', readonly=True)
     note = fields.Text('Notes')
     open_diff_count = fields.Integer('Opening differences', compute='_compute_totals', store=True)
     close_diff_count = fields.Integer('Closing differences', compute='_compute_totals', store=True)
@@ -116,7 +120,7 @@ class UtangeStockSheet(models.Model):
                          'sold': sold.get(pid, 0.0), 'amount': amount.get(pid, 0.0)})
 
     @api.model
-    def _start(self, config, session, counts, employee=None, outside=False):
+    def _start(self, config, session, counts, employee=None, outside=False, state='open'):
         """Creates the sheet of a shift. counts: {product_id: counted qty}; missing = system quantity."""
         location = config._utange_location()
         products = config._utange_sheet_products()
@@ -128,6 +132,7 @@ class UtangeStockSheet(models.Model):
             'open_employee_id': employee.id if employee else False,
             'open_date': (session.start_at if outside and session and session.start_at else fields.Datetime.now()),
             'opened_outside': outside,
+            'state': state,
         })
         lines = []
         order = {'bar': 0, 'kitchen': 1}
@@ -157,7 +162,7 @@ class UtangeStockSheet(models.Model):
             for l in sheet.line_ids:
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close) if counts else l.expected_close,
                          'closed': True})
-            sheet.write({'close_date': now, 'close_employee_id': employee.id if employee else False})
+            sheet.write({'close_date': now, 'close_employee_id': employee.id if employee else False, 'close_confirmed': True})
             sheet._notify_variance()
 
     def _notify_variance(self):
@@ -176,6 +181,50 @@ class UtangeStockSheet(models.Model):
                                             summary='Stock variance %s: %d items' % (sheet.name, len(bad)), note=text)
                 except Exception:
                     pass
+
+    # ------------------------------------------------------------------
+    # Counting in Odoo (same rules as the handheld)
+    # ------------------------------------------------------------------
+    def action_confirm_open(self):
+        for s in self:
+            if s.state != 'draft':
+                continue
+            s.write({'state': 'open', 'open_date': fields.Datetime.now(), 'open_user_id': self.env.user.id})
+            s.message_post(body='Opening count confirmed in Odoo: %d differences.' % s.open_diff_count)
+            if s.session_id and s.session_id.state == 'opened':
+                pass
+        return True
+
+    def action_start_close(self):
+        for s in self:
+            if s.state != 'open':
+                continue
+            s._refresh_movements()
+            for l in s.line_ids:
+                l.counted_close = l.expected_close
+            s.state = 'closing'
+        return True
+
+    def action_confirm_close(self):
+        now = fields.Datetime.now()
+        for s in self:
+            if s.state != 'closing' or s.close_confirmed:
+                continue
+            counts = {l.product_id.id: l.counted_close for l in s.line_ids}
+            s._refresh_movements(until=now)
+            for l in s.line_ids:
+                l.write({'counted_close': counts.get(l.product_id.id, l.expected_close), 'closed': True})
+            s.write({'close_date': now, 'close_confirmed': True, 'close_user_id': self.env.user.id})
+            s._notify_variance()
+            if not s.session_id or s.session_id.state == 'closed':
+                s.state = 'closed'
+        return True
+
+    def action_reopen_close_count(self):
+        for s in self.filtered(lambda x: x.state == 'closing' and x.close_confirmed and x.session_id.state != 'closed'):
+            s.write({'close_confirmed': False})
+            s.line_ids.write({'closed': False})
+        return True
 
     def action_refresh(self):
         self.filtered(lambda s: s.state == 'open')._refresh_movements()

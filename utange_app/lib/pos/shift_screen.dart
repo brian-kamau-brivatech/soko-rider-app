@@ -68,7 +68,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
       return;
     }
     List<Map<String, dynamic>>? counts;
-    if (i.requireSheet) {
+    if (i.requireSheet && i.sheetReady.isEmpty) {
       counts = await Navigator.of(context)
           .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'open')));
       if (counts == null || !mounted) return;
@@ -100,7 +100,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
       return;
     }
     List<Map<String, dynamic>>? counts;
-    if (i.countAtClose) {
+    if (i.countAtClose && !i.closeReady) {
       counts = await Navigator.of(context)
           .push<List<Map<String, dynamic>>>(MaterialPageRoute(builder: (_) => const CountScreen(phase: 'close')));
       if (counts == null || !mounted) return;
@@ -286,7 +286,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
           Text('Open the shift', style: h(17)),
           const SizedBox(height: 4),
           Text(
-            i.requireSheet
+            i.requireSheet && i.sheetReady.isNotEmpty
+                ? 'Opening stock already counted in Odoo (${i.sheetReady}). Enter the cash in the drawer and open.'
+                : i.requireSheet
                 ? '1. Enter the cash in the drawer.  2. Count every item on the stock sheet.  3. Confirm.'
                 : 'Count the cash in the drawer.',
             style: const TextStyle(color: C.muted),
@@ -303,8 +305,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
             decoration: const InputDecoration(labelText: 'Note (optional)', prefixIcon: Icon(Icons.notes_rounded)),
           ),
           const SizedBox(height: 16),
-          primaryButton(i.requireSheet ? 'Count stock and open' : 'Open shift', _open,
-              icon: i.requireSheet ? Icons.fact_check_rounded : Icons.lock_open_rounded, busy: _busy),
+          primaryButton(i.requireSheet && i.sheetReady.isEmpty ? 'Count stock and open' : 'Open shift', _open,
+              icon: i.requireSheet && i.sheetReady.isEmpty ? Icons.fact_check_rounded : Icons.lock_open_rounded, busy: _busy),
         ]),
       );
 
@@ -384,9 +386,10 @@ class _ShiftScreenState extends State<ShiftScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('Close the shift', style: h(17)),
           if (i.countAtClose)
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('You will count the stock before the shift closes.', style: TextStyle(color: C.muted)),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(i.closeReady ? 'Closing stock already counted in Odoo.' : 'You will count the stock before the shift closes.',
+                  style: const TextStyle(color: C.muted)),
             ),
           if (c.hasCash) ...[
             const SizedBox(height: 8),
@@ -411,7 +414,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
             decoration: const InputDecoration(labelText: 'Closing note (optional)', prefixIcon: Icon(Icons.notes_rounded)),
           ),
           const SizedBox(height: 16),
-          primaryButton(i.countAtClose ? 'Count stock and close' : 'Close shift', blocked ? null : _close,
+          primaryButton(i.countAtClose && !i.closeReady ? 'Count stock and close' : 'Close shift', blocked ? null : _close,
               icon: Icons.lock_rounded, color: C.red, busy: _busy),
         ]),
       ),

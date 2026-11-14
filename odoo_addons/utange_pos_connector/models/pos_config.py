@@ -68,6 +68,26 @@ class PosConfig(models.Model):
         help='Only products of these POS categories are on the stock sheet. Empty: all stock-tracked POS products.')
 
     # ------------------------------------------------------------------
+    def action_utange_count(self):
+        """Point of Sale > Handheld > Count stock: the sheet to count now (opening or closing)."""
+        self.ensure_one()
+        Sheet = self.env['utange.stock.sheet'].sudo()
+        session = self.env['pos.session'].sudo().search(
+            [('config_id', '=', self.id), ('state', 'in', ('opening_control', 'opened', 'closing_control')),
+             ('rescue', '=', False)], order='id desc', limit=1)
+        sheet = Sheet
+        if session and session.state != 'opening_control':
+            sheet = session._utange_sheet()
+            if not sheet:
+                sheet = Sheet._start(self, session, {}, outside=True)  # opened before the add-on: closing count only
+        if not sheet:
+            sheet = Sheet.search([('config_id', '=', self.id), ('session_id', '=', False), ('state', 'in', ('draft', 'open'))],
+                                 order='id desc', limit=1)
+        if not sheet:
+            sheet = Sheet._start(self, None, {}, state='draft')
+        return {'type': 'ir.actions.act_window', 'res_model': 'utange.stock.sheet', 'res_id': sheet.id,
+                'view_mode': 'form', 'target': 'current', 'name': 'Count stock: %s' % self.name}
+
     def _utange_location(self):
         """The POS's own source location (used for items that are neither bar nor kitchen)."""
         self.ensure_one()

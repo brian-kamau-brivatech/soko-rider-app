@@ -562,7 +562,8 @@ class UtangePosApi(http.Controller):
     def _sheet_of(self, session):
         if not session:
             return request.env['utange.stock.sheet']
-        return request.env['utange.stock.sheet'].sudo().search([('session_id', '=', session.id)], order='id desc', limit=1)
+        return request.env['utange.stock.sheet'].sudo().search([('session_id', '=', session.id), ('state', '!=', 'draft')],
+                                                               order='id desc', limit=1)
 
     def _session_info(self, config, emp=None, role=None):
         session = self._live_session(config)
@@ -587,6 +588,8 @@ class UtangePosApi(http.Controller):
             'sheet': {'id': sheet.id, 'name': sheet.name, 'outside': sheet.opened_outside,
                       'open_diffs': sheet.open_diff_count} if sheet else None,
             'needs_open_count': bool(session and session.state == 'opened' and config.utange_require_sheet and not sheet),
+            'sheet_ready': (self._ready_sheet(config).name or '') if (not session or session.state == 'opening_control') else '',
+            'close_ready': bool(sheet and sheet.close_confirmed),
         }
         if not session:
             return data
@@ -656,6 +659,11 @@ class UtangePosApi(http.Controller):
     def _points_text(self, config):
         return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
 
+    def _ready_sheet(self, config):
+        """An opening count confirmed in Odoo (or earlier on a handheld) waiting for its session."""
+        return request.env['utange.stock.sheet'].sudo().search(
+            [('config_id', '=', config.id), ('session_id', '=', False), ('state', '=', 'open')], order='id desc', limit=1)
+
     def _counts(self, counts):
         out = {}
         for c in (counts or []):
@@ -677,7 +685,9 @@ class UtangePosApi(http.Controller):
         if session and session.state == 'closing_control':
             return {'ok': False, 'error': '%s is being closed. Finish closing it first.' % session.name}
         counted = self._counts(counts)
-        if config.utange_require_sheet:
+        Sheet = request.env['utange.stock.sheet'].sudo()
+        ready = self._ready_sheet(config) if not counted else Sheet
+        if config.utange_require_sheet and not ready:
             needed = config._utange_sheet_products()
             missing = needed.filtered(lambda p: p.id not in counted)
             if missing:
@@ -685,6 +695,8 @@ class UtangePosApi(http.Controller):
                     len(missing), ', '.join(missing[:3].mapped('display_name'))), 'count_required': True}
         env = self._as_pos_user(config, session)
         try:
+            # The confirmed sheet exists first, so Odoo lets the session open (see pos_session.py).
+            sheet = ready or Sheet._start(config, None, counted, employee=emp)
             cfg = env['pos.config'].browse(config.id)
             if not session:
                 cfg._check_before_creating_new_session()
@@ -694,7 +706,8 @@ class UtangePosApi(http.Controller):
             if session.state == 'opening_control':
                 cash = _f(opening_cash) if opening_cash not in (None, '') else session.cash_register_balance_start
                 session.set_cashbox_pos(cash, ((notes or '').strip() + '\n(opened on the Utange handheld%s)' % by).strip())
-            sheet = request.env['utange.stock.sheet'].sudo()._start(config, session, counted, employee=emp)
+            if not sheet.session_id:
+                sheet.session_id = session.id
         except (UserError, ValidationError, AccessError) as e:
             request.env.cr.rollback()
             return {'ok': False, 'error': _err(e)}
@@ -772,7 +785,8 @@ class UtangePosApi(http.Controller):
         Sheet = request.env['utange.stock.sheet'].sudo()
         sheet = self._sheet_of(live) or Sheet._start(config, live, {}, outside=True)
         counted = self._counts(counts)
-        if config.utange_count_at_close:
+        done_in_odoo = sheet.close_confirmed and not counted
+        if config.utange_count_at_close and not done_in_odoo:
             missing = sheet.line_ids.filtered(lambda l: l.product_id.id not in counted)
             if missing:
                 return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
@@ -787,7 +801,8 @@ class UtangePosApi(http.Controller):
                 return {'ok': False, 'error': 'Cash difference KSh %.0f is more than the KSh %.0f allowed. '
                                               'Recount, or a manager closes it in Odoo.' % (diff, limit)}
         # 1) the closing count is saved first (kept even if Odoo cannot close the session)
-        sheet._finish(counted, employee=emp)
+        if not done_in_odoo:
+            sheet._finish(counted, employee=emp)
         request.env.cr.commit()
         env = self._as_pos_user(config, live)
         session = env['pos.session'].browse(live.id)

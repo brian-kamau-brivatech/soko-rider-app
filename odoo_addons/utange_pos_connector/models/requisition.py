@@ -12,9 +12,11 @@ class UtangeRequisition(models.Model):
 
     name = fields.Char(required=True, default='/', copy=False, readonly=True)
     date = fields.Datetime(default=fields.Datetime.now, readonly=True)
-    config_id = fields.Many2one('pos.config', 'Point of Sale', required=True, index=True)
+    config_id = fields.Many2one('pos.config', 'Point of Sale', required=True, index=True,
+                                default=lambda s: s.env['pos.config'].search([('active', '=', True)], limit=1))
     session_id = fields.Many2one('pos.session', 'Session', readonly=True)
-    employee_id = fields.Many2one('hr.employee', 'Requested by', readonly=True)
+    employee_id = fields.Many2one('hr.employee', 'Requested by', readonly=True,
+                                  default=lambda s: s.env.user.employee_id)
     point = fields.Selection([('bar', 'Bar'), ('kitchen', 'Kitchen'), ('main', 'POS')], string='For', default='bar',
                              required=True, tracking=True)
     location_src_id = fields.Many2one('stock.location', 'From (main store)', required=True, domain=[('usage', '=', 'internal')])
@@ -35,6 +37,13 @@ class UtangeRequisition(models.Model):
     approved_date = fields.Datetime(readonly=True, copy=False)
     item_count = fields.Integer(compute='_compute_item_count')
 
+    @api.onchange('config_id', 'point')
+    def _onchange_point(self):
+        for r in self:
+            if r.config_id:
+                r.location_src_id = r.config_id._utange_store_location()
+                r.location_dest_id = r.config_id._utange_point_location(r.point if r.point in ('bar', 'kitchen') else False)
+
     @api.depends('line_ids')
     def _compute_item_count(self):
         for r in self:
@@ -45,6 +54,11 @@ class UtangeRequisition(models.Model):
         for v in vals_list:
             if v.get('name', '/') == '/':
                 v['name'] = self.env['ir.sequence'].next_by_code('utange.requisition') or '/'
+            cfg = self.env['pos.config'].browse(v.get('config_id')) if v.get('config_id') else \
+                self.env['pos.config'].search([('active', '=', True)], limit=1)
+            if cfg:
+                v.setdefault('location_src_id', cfg._utange_store_location().id)
+                v.setdefault('location_dest_id', cfg._utange_point_location(v.get('point') if v.get('point') in ('bar', 'kitchen') else False).id)
         recs = super().create(vals_list)
         recs._notify_managers()
         return recs

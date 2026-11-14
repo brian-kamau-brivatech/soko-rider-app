@@ -2,6 +2,19 @@
 <odoo>
     <menuitem id="menu_utange_root" name="Handheld" parent="point_of_sale.menu_point_root" sequence="25"
               groups="point_of_sale.group_pos_user,point_of_sale.group_pos_manager"/>
+    <record id="action_utange_count" model="ir.actions.server">
+        <field name="name">Count stock</field>
+        <field name="model_id" ref="point_of_sale.model_pos_config"/>
+        <field name="state">code</field>
+        <field name="code">
+configs = env['pos.config'].search([('active', '=', True)])
+if len(configs) == 1:
+    action = configs.action_utange_count()
+else:
+    action = env['ir.actions.act_window']._for_xml_id('utange_pos_connector.action_pos_config_utange')
+        </field>
+    </record>
+    <menuitem id="menu_utange_count" name="Count stock" parent="menu_utange_root" action="action_utange_count" sequence="0"/>
     <menuitem id="menu_utange_sheets" name="Shift stock sheets" parent="menu_utange_root" action="action_stock_sheet" sequence="1"/>
     <menuitem id="menu_utange_variances" name="Stock variances" parent="menu_utange_root" action="action_sheet_variances" sequence="2"
               groups="point_of_sale.group_pos_manager"/>

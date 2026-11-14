@@ -356,6 +356,10 @@ class SessionInfo {
   final String sheetName;
   final int openDiffs;
   final bool needsOpenCount;
+  /// An opening count already confirmed in Odoo (sheet name), or ''.
+  final String sheetReady;
+  /// The closing count was already confirmed in Odoo.
+  final bool closeReady;
   SessionInfo.fromJson(Map<String, dynamic> j)
       : config = ss(j['config']),
         state = ss(j['state']),
@@ -375,7 +379,9 @@ class SessionInfo {
         countAtClose = j['count_at_close'] == true,
         sheetName = j['sheet'] is Map ? ss(j['sheet']['name']) : '',
         openDiffs = j['sheet'] is Map ? ii(j['sheet']['open_diffs']) : 0,
-        needsOpenCount = j['needs_open_count'] == true;
+        needsOpenCount = j['needs_open_count'] == true,
+        sheetReady = (j['sheet_ready'] ?? '').toString(),
+        closeReady = j['close_ready'] == true;
   bool get isOpen => state == 'opened';
   bool get isClosing => state == 'closing_control';
   bool get canOpen => state == 'closed' || state == 'opening_control';

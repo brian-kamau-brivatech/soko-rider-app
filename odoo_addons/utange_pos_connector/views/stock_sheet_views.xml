@@ -28,12 +28,24 @@
         <field name="arch" type="xml">
             <form create="false">
                 <header>
-                    <button name="action_refresh" type="object" string="Refresh sales and transfers" invisible="state != 'open'"/>
-                    <button name="action_print" type="object" string="Print" class="btn-primary"/>
+                    <button name="action_confirm_open" type="object" string="Confirm opening count" class="btn-primary"
+                            invisible="state != 'draft'" confirm="Confirm the opening stock as counted? The shift can then be opened (Odoo POS or handheld)."/>
+                    <button name="action_start_close" type="object" string="Start closing count" class="btn-primary" invisible="state != 'open'"/>
+                    <button name="action_confirm_close" type="object" string="Confirm closing count" class="btn-primary"
+                            invisible="state != 'closing' or close_confirmed" confirm="Confirm the closing stock as counted? Differences are sent to the managers."/>
+                    <button name="action_reopen_close_count" type="object" string="Recount" invisible="state != 'closing' or not close_confirmed"/>
+                    <button name="action_refresh" type="object" string="Refresh sales and transfers" invisible="state not in ('open', 'closing')"/>
+                    <button name="action_print" type="object" string="Print"/>
                     <field name="state" widget="statusbar"/>
                 </header>
                 <sheet>
                     <div class="oe_title"><h1><field name="name"/></h1></div>
+                    <div class="alert alert-info" role="alert" invisible="state != 'draft'">
+                        Opening count: type what is really on the shelf in <b>Opening</b> (it starts with the system figure), then <b>Confirm opening count</b>.
+                    </div>
+                    <div class="alert alert-info" role="alert" invisible="state != 'closing' or close_confirmed">
+                        Closing count: type what is left in <b>Closing</b> (it starts with the expected figure), then <b>Confirm closing count</b>.
+                    </div>
                     <div class="alert alert-warning" role="alert" invisible="not opened_outside">
                         The session was opened without a count on the handheld: the opening figures are worked out by Odoo.
                     </div>
@@ -43,6 +55,7 @@
                             <field name="session_id"/>
                             <field name="location_id"/>
                             <field name="opened_outside" invisible="1"/>
+                            <field name="close_confirmed" invisible="1"/>
                         </group>
                         <group>
                             <field name="open_date"/>
@@ -65,18 +78,18 @@
                     <notebook>
                         <page string="Stock sheet" name="lines">
                             <field name="line_ids">
-                                <tree decoration-danger="closed and close_diff &lt; 0" decoration-warning="open_diff != 0">
+                                <tree editable="bottom" create="false" delete="false" decoration-danger="closed and close_diff &lt; 0" decoration-warning="open_diff != 0">
                                     <field name="product_id"/>
                                     <field name="point" string="Stock" optional="show"/>
                                     <field name="uom_id" optional="hide"/>
                                     <field name="system_open" string="System" optional="show"/>
-                                    <field name="counted_open" string="Opening"/>
+                                    <field name="counted_open" string="Opening" readonly="parent.state != 'draft'"/>
                                     <field name="open_diff" string="Open diff" optional="show"/>
                                     <field name="received" string="In"/>
                                     <field name="sent_out" string="Out" optional="show"/>
                                     <field name="sold" string="Sold"/>
                                     <field name="expected_close" string="Expected"/>
-                                    <field name="counted_close" string="Closing"/>
+                                    <field name="counted_close" string="Closing" readonly="parent.state != 'closing' or parent.close_confirmed"/>
                                     <field name="close_diff" string="Diff"/>
                                     <field name="price" string="Price"/>
                                     <field name="amount" string="Amount" sum="Total"/>
