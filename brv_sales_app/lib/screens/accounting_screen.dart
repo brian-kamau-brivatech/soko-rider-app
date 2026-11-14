@@ -259,7 +259,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (name == null || name.trim().isEmpty) return;
     final db = await Db.get();
     final next = await Db.count("SELECT COALESCE(MAX(CAST(code AS INTEGER)), 6000) + 10 FROM accounts WHERE type = 'expense' AND code LIKE '6%'");
-    await db.insert('accounts', {'code': '$next', 'name': name.trim(), 'type': 'expense'});
+    await Db.ins(db, 'accounts', {'code': '$next', 'name': name.trim(), 'type': 'expense'});
     _load();
   }
 

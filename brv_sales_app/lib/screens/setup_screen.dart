@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db.dart';
 import '../fmt.dart';
+import '../licence.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../ui.dart';
@@ -79,8 +80,8 @@ class _SetupScreenState extends State<SetupScreen> {
           child: ListView(padding: const EdgeInsets.fromLTRB(20, 24, 20, 32), children: [
             Center(child: Image.asset('assets/brv_logo.png', height: 120)),
             const SizedBox(height: 8),
-            Center(child: Text('BRV Pos Sales', style: h(26))),
-            const Center(child: Text('Set up your business. Everything stays on this phone and works offline.', textAlign: TextAlign.center, style: muted)),
+            Center(child: Text(Licence.i.company.isEmpty ? 'BRV Pos Manager' : Licence.i.company, style: h(26))),
+            const Center(child: Text('Set up your business once. It is shared with your user devices and works offline.', textAlign: TextAlign.center, style: muted)),
             const Label('Business'),
             TextField(controller: _business, decoration: const InputDecoration(labelText: 'Business name *')),
             const SizedBox(height: 10),
@@ -104,8 +105,6 @@ class _SetupScreenState extends State<SetupScreen> {
             TextField(controller: _pin2, obscureText: true, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: 'Repeat the PIN *', counterText: '')),
             const SizedBox(height: 20),
             FilledButton(onPressed: _busy ? null : _save, child: Text(_busy ? 'Saving...' : 'Start')),
-            const SizedBox(height: 12),
-            const Center(child: Text('Restoring from a backup? Start, then More > Backup and restore.', style: muted, textAlign: TextAlign.center)),
           ]),
         ),
       );

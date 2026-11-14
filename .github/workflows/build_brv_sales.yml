@@ -1,4 +1,4 @@
-name: Build BRV Pos Sales
+name: Build BRV Pos (Manager, Sales, Licence)
 
 on:
   push:
@@ -14,10 +14,32 @@ permissions:
 
 jobs:
   build:
+    name: Build ${{ matrix.label }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: manager
+            project: brv_pos_manager
+            label: BRV Pos Manager
+            tag: brv-pos-manager
+            apk: BRV-Pos-Manager
+          - mode: sales
+            project: brv_pos_sales
+            label: BRV Pos Sales
+            tag: brv-pos-sales
+            apk: BRV-Pos-Sales
+          - mode: dev
+            project: brv_licence
+            label: BRV Licence
+            tag: brv-licence
+            apk: BRV-Licence
     defaults:
       run:
         working-directory: brv_sales_app
+    env:
+      BRV_SERVER: ${{ vars.BRV_SERVER }}
     steps:
       - uses: actions/checkout@v5
 
@@ -33,17 +55,20 @@ jobs:
           cache: true
 
       - name: Generate Android project
+        env:
+          APP_LABEL: ${{ matrix.label }}
         run: |
-          flutter create --platforms=android --org=ke.co.brivatech --project-name=brv_pos_sales .
+          sed -i 's/^name: brv_pos_sales/name: ${{ matrix.project }}/' pubspec.yaml
+          flutter create --platforms=android --org=ke.co.brivatech --project-name=${{ matrix.project }} .
           rm -rf test
           rm -rf android/app/src/main/res/mipmap-anydpi-v26
           python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
           python3 - <<'PY'
           from PIL import Image
-          icon = Image.open("assets/app_icon.png").convert("RGB")
+          icon = Image.open("assets/app_icon_${{ matrix.mode }}.png").convert("RGB")
           for d, s in [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]:
               icon.resize((s, s), Image.LANCZOS).save("android/app/src/main/res/mipmap-%s/ic_launcher.png" % d)
-          print("BRV Pos Sales launcher icons made")
+          print("launcher icons made")
           PY
           python3 android_overrides/patch_native.py
 
@@ -76,25 +101,28 @@ jobs:
 
       - name: Build APKs (light 64-bit + 32-bit for older handhelds)
         run: |
+          SERVER_ARG=""
+          if [ -n "$BRV_SERVER" ]; then SERVER_ARG="--dart-define=BRV_SERVER=$BRV_SERVER"; fi
           flutter build apk --release --split-per-abi --target-platform android-arm64,android-arm \
-            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }}
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk BRV-Pos-Sales-64bit.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk BRV-Pos-Sales-32bit.apk
+            --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }} \
+            --dart-define=APP_MODE=${{ matrix.mode }} $SERVER_ARG
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ${{ matrix.apk }}-64bit.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ${{ matrix.apk }}-32bit.apk
           ls -lh *.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BRV-Pos-Sales
-          path: brv_sales_app/BRV-Pos-Sales-*.apk
+          name: ${{ matrix.tag }}
+          path: brv_sales_app/${{ matrix.apk }}-*.apk
 
       - name: Release with downloadable APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: brv-sales-v1.0.${{ github.run_number }}
-          name: "BRV Pos Sales v1.0.${{ github.run_number }}"
-          body: "BRV Pos Sales: offline point of sale with users and PINs, roles and rights, shifts, stock per location, requisitions, purchases, customers on credit, expenses, double-entry accounting, reports and an owner dashboard. Download -64bit.apk (most phones and handhelds); use -32bit.apk only if the 64-bit one says it is not compatible. Guide: brv_sales_app/README.md."
+          tag_name: ${{ matrix.tag }}-v1.0.${{ github.run_number }}
+          name: "${{ matrix.label }} v1.0.${{ github.run_number }}"
+          body: "${{ matrix.label }}. BRV Licence = developer (companies, licence days, device limits). BRV Pos Manager = the company's manager phone (full system, users and rights, devices). BRV Pos Sales = staff devices (sell offline, sync when online). Download -64bit.apk; use -32bit.apk only if the 64-bit one says it is not compatible. Guide: brv_sales_app/README.md."
           files: |
-            brv_sales_app/BRV-Pos-Sales-64bit.apk
-            brv_sales_app/BRV-Pos-Sales-32bit.apk
+            brv_sales_app/${{ matrix.apk }}-64bit.apk
+            brv_sales_app/${{ matrix.apk }}-32bit.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

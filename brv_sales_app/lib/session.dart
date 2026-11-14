@@ -59,7 +59,7 @@ class Session extends ChangeNotifier {
   static Future<int> createUser({required String name, required String pin, required int roleId, String phone = '', bool owner = false}) async {
     final db = await Db.get();
     final salt = newSalt();
-    return db.insert('users', {
+    return Db.ins(db, 'users', {
       'name': name.trim(),
       'phone': phone.trim(),
       'role_id': roleId,
@@ -124,7 +124,9 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> refreshShift() async {
-    shift = await Db.one("SELECT * FROM shifts WHERE user_id = ? AND state = 'open' ORDER BY id DESC LIMIT 1", [userId]);
+    // a shift is one person's cash drawer on this device
+    shift = await Db.one("SELECT * FROM shifts WHERE user_id = ? AND state = 'open' AND device_no = ? ORDER BY id DESC LIMIT 1",
+        [userId, Db.deviceNo]);
     notifyListeners();
   }
 

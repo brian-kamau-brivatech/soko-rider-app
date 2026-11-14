@@ -247,7 +247,7 @@ class _RoleFormState extends State<RoleForm> {
     final db = await Db.get();
     final vals = {'name': _name.text.trim(), 'perms': P.keys.where(_perms.contains).join(',')};
     if (widget.role == null) {
-      await db.insert('roles', vals);
+      await Db.ins(db, 'roles', vals);
     } else {
       await db.update('roles', vals, where: 'id = ?', whereArgs: [widget.role!['id']]);
     }

@@ -30,7 +30,7 @@ class Stock {
     if (qty.abs() < 0.00001) return;
     if (from > 0) await _add(tx, productId, from, -qty);
     if (to > 0) await _add(tx, productId, to, qty);
-    await tx.insert('stock_moves', {
+    await Db.ins(tx, 'stock_moves', {
       'date': nowIso(), 'product_id': productId, 'from_loc': from, 'to_loc': to, 'qty': qty, 'cost': cost,
       'kind': kind, 'ref': ref, 'user_id': userId, 'note': note,
     });

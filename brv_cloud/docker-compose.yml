@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: brv
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: brv_cloud
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+  api:
+    build: .
+    restart: always
+    depends_on: [db]
+    environment:
+      DATABASE_URL: postgresql://brv:${DB_PASSWORD}@db:5432/brv_cloud
+      DEV_KEY: ${DEV_KEY}
+    ports:
+      - "8095:8000"

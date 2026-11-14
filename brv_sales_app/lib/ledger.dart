@@ -18,7 +18,7 @@ class Ledger {
     if ((dr - cr).abs() > 0.02) {
       throw StateError('Journal $ref not balanced: debit ${money(dr)} credit ${money(cr)}');
     }
-    final jid = await tx.insert('journal', {'date': date ?? nowIso(), 'ref': ref, 'memo': memo, 'kind': kind, 'user_id': userId});
+    final jid = await Db.ins(tx, 'journal', {'date': date ?? nowIso(), 'ref': ref, 'memo': memo, 'kind': kind, 'user_id': userId});
     for (final l in kept) {
       // negative amounts go to the other side
       var debit = r2(l.$2), credit = r2(l.$3);
@@ -30,7 +30,7 @@ class Ledger {
         debit += -credit;
         credit = 0;
       }
-      await tx.insert('journal_lines', {'journal_id': jid, 'account_id': l.$1, 'debit': debit, 'credit': credit, 'partner': l.$4});
+      await Db.ins(tx, 'journal_lines', {'journal_id': jid, 'account_id': l.$1, 'debit': debit, 'credit': credit, 'partner': l.$4});
     }
     return jid;
   }

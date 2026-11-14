@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../config.dart';
 import '../perms.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../ui.dart';
 import 'accounting_screen.dart';
 import 'customers_screen.dart';
+import 'devices_screen.dart';
 import 'sales_screen.dart';
 import 'settings_screen.dart';
 import 'shell.dart';
@@ -42,18 +44,32 @@ class MoreScreen extends StatelessWidget {
             IconButton(onPressed: () => ses.lock(), icon: const Icon(Icons.logout, color: Colors.white)),
           ]),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
+        if (isManagerApp && (ses.owner || ses.can(P.users) || ses.can(P.settings)))
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: box(),
+            child: ListTile(
+              leading: const Icon(Icons.devices_other),
+              title: const Text('Devices and licence', style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: const Text('User devices, days left, sync'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => go(const DevicesScreen()),
+            ),
+          )
+        else
+          const Padding(padding: EdgeInsets.only(bottom: 16), child: LicenceCard()),
         Group('Selling', [
           if (ses.can(P.shift)) item(Icons.lock_clock_outlined, 'Shift (cash drawer)', const ShiftScreen(), sub: ses.shift == null ? 'Closed' : 'Open'),
           item(Icons.receipt_long_outlined, ses.can(P.allSales) ? 'Sales' : 'My sales', const SalesScreen()),
           if (ses.can(P.customers) || ses.can(P.customerPay)) item(Icons.people_outline, 'Customers', const CustomersScreen(), sub: 'Credit, balances, payments'),
         ]),
-        if (ses.can(P.accounting) || ses.can(P.expenses))
+        if (isManagerApp && (ses.can(P.accounting) || ses.can(P.expenses)))
           Group('Money', [
             if (ses.can(P.accounting)) item(Icons.account_balance_outlined, 'Accounting', const AccountingScreen(), sub: 'P&L, balance sheet, journal'),
             if (ses.can(P.expenses)) item(Icons.receipt_outlined, 'Expenses', const ExpensesScreen()),
           ]),
-        if (ses.can(P.users) || ses.can(P.roles) || ses.can(P.settings) || ses.can(P.backup))
+        if (isManagerApp && (ses.can(P.users) || ses.can(P.roles) || ses.can(P.settings) || ses.can(P.backup)))
           Group('Administration', [
             if (ses.can(P.users)) item(Icons.manage_accounts_outlined, 'Users and PINs', const UsersScreen()),
             if (ses.can(P.roles) && !ses.can(P.users)) item(Icons.admin_panel_settings_outlined, 'Roles and rights', const RolesScreen()),
@@ -63,11 +79,11 @@ class MoreScreen extends StatelessWidget {
             if (ses.can(P.backup)) item(Icons.backup_outlined, 'Backup and restore', const BackupScreen()),
             if (ses.owner || ses.can(P.users)) item(Icons.history, 'Activity log', const AuditScreen()),
           ]),
-        if (!ses.can(P.settings))
+        if (!isManagerApp || !ses.can(P.settings))
           Group('Device', [item(Icons.print_outlined, 'Printer', const PrinterScreen())]),
         const SizedBox(height: 8),
         Center(child: Image.asset('assets/brv_logo.png', height: 70)),
-        const Center(child: Text('BRV Pos Sales · works offline', style: TextStyle(color: C.muted, fontSize: 12))),
+        Center(child: Text('$appTitle · works offline, syncs when online', style: const TextStyle(color: C.muted, fontSize: 12))),
       ]),
     );
   }

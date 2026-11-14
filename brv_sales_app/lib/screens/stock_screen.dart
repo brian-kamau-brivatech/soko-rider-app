@@ -336,7 +336,7 @@ class _ProductFormState extends State<ProductForm> {
     try {
       await db.transaction((tx) async {
         if (widget.id == null) {
-          final id = await tx.insert('products', {...vals, 'created_at': nowIso()});
+          final id = await Db.ins(tx, 'products', {...vals, 'created_at': nowIso()});
           final open = numIn(_opening.text) ?? 0;
           if (_track && open > 0 && _openLoc > 0) {
             await Stock.setCounted(tx, productId: id, locationId: _openLoc, counted: open, userId: Session.i.userId,
@@ -452,7 +452,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     if (v == null || v.trim().isEmpty) return;
     final db = await Db.get();
     if (c == null) {
-      await db.insert('categories', {'name': v.trim()});
+      await Db.ins(db, 'categories', {'name': v.trim()});
     } else {
       await db.update('categories', {'name': v.trim()}, where: 'id = ?', whereArgs: [c['id']]);
     }
@@ -515,7 +515,7 @@ class _LocationsScreenState extends State<LocationsScreen> {
     if (v == null || v.trim().isEmpty) return;
     final db = await Db.get();
     if (l == null) {
-      await db.insert('locations', {'name': v.trim(), 'kind': 'shop'});
+      await Db.ins(db, 'locations', {'name': v.trim(), 'kind': 'shop'});
     } else {
       await db.update('locations', {'name': v.trim()}, where: 'id = ?', whereArgs: [l['id']]);
     }

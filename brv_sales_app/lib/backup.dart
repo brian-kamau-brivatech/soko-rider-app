@@ -81,7 +81,6 @@ class Backup {
     await db.transaction((tx) async {
       for (final name in Db.tables) {
         await tx.delete(name);
-        await tx.rawDelete("DELETE FROM sqlite_sequence WHERE name = ?", [name]);
         for (final row in (t[name] as List? ?? const [])) {
           await tx.insert(name, Map<String, Object?>.from(row as Map));
         }

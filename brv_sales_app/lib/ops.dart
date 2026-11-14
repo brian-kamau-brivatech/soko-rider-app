@@ -18,7 +18,7 @@ class Purchases {
       final total = r2(lines.fold<double>(0, (a, l) => a + l.$3 * l.$4));
       if (id == null) {
         final number = await Db.nextNumber(tx, 'po', 'PO-', 5);
-        pid = await tx.insert('purchases', {
+        pid = await Db.ins(tx, 'purchases', {
           'number': number, 'date': nowIso(), 'supplier_id': supplierId, 'location_id': locationId, 'state': 'draft',
           'total': total, 'user_id': ses.userId, 'note': note, 'supplier_ref': supplierRef,
         });
@@ -31,7 +31,7 @@ class Purchases {
         await tx.delete('purchase_lines', where: 'purchase_id = ?', whereArgs: [id]);
       }
       for (final l in lines) {
-        await tx.insert('purchase_lines', {'purchase_id': pid, 'product_id': l.$1, 'name': l.$2, 'qty': l.$3, 'cost': l.$4, 'total': r2(l.$3 * l.$4)});
+        await Db.ins(tx, 'purchase_lines', {'purchase_id': pid, 'product_id': l.$1, 'name': l.$2, 'qty': l.$3, 'cost': l.$4, 'total': r2(l.$3 * l.$4)});
       }
     });
     return pid;
@@ -89,7 +89,7 @@ class Purchases {
       if (m.isEmpty || s(m.first['kind']) == 'credit') throw SaleError('Choose how you paid (cash, M-Pesa, bank).');
       final sup = await tx.rawQuery('SELECT name FROM suppliers WHERE id = ?', [supplierId]);
       final name = sup.isEmpty ? '' : s(sup.first['name']);
-      await tx.insert('supplier_payments', {
+      await Db.ins(tx, 'supplier_payments', {
         'date': nowIso(), 'supplier_id': supplierId, 'purchase_id': purchaseId, 'method_id': methodId, 'amount': amount,
         'ref': ref, 'user_id': ses.userId, 'shift_id': ses.shift == null ? null : n(ses.shift!['id']),
       });
@@ -109,7 +109,7 @@ class Customers {
       if (m.isEmpty || s(m.first['kind']) == 'credit') throw SaleError('Choose how the customer paid.');
       final c = await tx.rawQuery('SELECT name FROM customers WHERE id = ?', [customerId]);
       final name = c.isEmpty ? '' : s(c.first['name']);
-      await tx.insert('customer_payments', {
+      await Db.ins(tx, 'customer_payments', {
         'date': nowIso(), 'customer_id': customerId, 'method_id': methodId, 'amount': amount, 'ref': ref,
         'user_id': ses.userId, 'shift_id': ses.shift == null ? null : n(ses.shift!['id']),
       });
@@ -129,11 +129,11 @@ class Requisitions {
     late int rid;
     await db.transaction((tx) async {
       final number = await Db.nextNumber(tx, 'req', 'REQ-', 5);
-      rid = await tx.insert('requisitions', {
+      rid = await Db.ins(tx, 'requisitions', {
         'number': number, 'date': nowIso(), 'from_loc': fromLoc, 'to_loc': toLoc, 'state': 'pending', 'user_id': ses.userId, 'note': note,
       });
       for (final l in lines) {
-        await tx.insert('requisition_lines', {'requisition_id': rid, 'product_id': l.$1, 'qty': l.$2});
+        await Db.ins(tx, 'requisition_lines', {'requisition_id': rid, 'product_id': l.$1, 'qty': l.$2});
       }
     });
     return rid;
@@ -187,7 +187,7 @@ class Expenses {
       final m = await tx.rawQuery('SELECT account_id, kind FROM pay_methods WHERE id = ?', [methodId]);
       if (m.isEmpty || s(m.first['kind']) == 'credit') throw SaleError('Choose how it was paid.');
       final a = await tx.rawQuery('SELECT name FROM accounts WHERE id = ?', [accountId]);
-      await tx.insert('expenses', {
+      await Db.ins(tx, 'expenses', {
         'date': nowIso(), 'account_id': accountId, 'method_id': methodId, 'amount': amount, 'note': note,
         'user_id': ses.userId, 'shift_id': ses.shift == null ? null : n(ses.shift!['id']),
       });

@@ -142,8 +142,8 @@ class _PayMethodsScreenState extends State<PayMethodsScreen> {
     if (name == null || name.trim().isEmpty) return;
     final db = await Db.get();
     final code = await Db.count("SELECT COALESCE(MAX(CAST(code AS INTEGER)), 1020) + 1 FROM accounts WHERE code BETWEEN '1000' AND '1099'");
-    final acc = await db.insert('accounts', {'code': '$code', 'name': name.trim(), 'type': 'asset'});
-    await db.insert('pay_methods', {'name': name.trim(), 'kind': 'other', 'account_id': acc});
+    final acc = await Db.ins(db, 'accounts', {'code': '$code', 'name': name.trim(), 'type': 'asset'});
+    await Db.ins(db, 'pay_methods', {'name': name.trim(), 'kind': 'other', 'account_id': acc});
     _load();
   }
 
@@ -300,8 +300,8 @@ class _BackupScreenState extends State<BackupScreen> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('All your data lives on this phone.', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
               const SizedBox(height: 6),
-              const Text('A backup is saved automatically when a shift closes, in Downloads/BRV Pos Sales/Backups (kept even if the app is removed). '
-                  'Share it to Google Drive, Gmail or WhatsApp so a lost or broken phone does not lose your business.',
+              const Text('A copy is saved on this phone when the app starts, in Downloads/BRV Pos Sales/Backups. '
+                  'Share it to Google Drive or Gmail for your own records.',
                   style: TextStyle(color: Color(0xFFCBD5E1))),
               const SizedBox(height: 10),
               Text('Last backup: ${_last == null ? 'never' : dateText(_last!.toIso8601String())}', style: h(14, color: C.gold)),
@@ -312,12 +312,8 @@ class _BackupScreenState extends State<BackupScreen> {
           const SizedBox(height: 10),
           OutlinedButton.icon(onPressed: _busy ? null : () => _save(false), icon: const Icon(Icons.save_alt), label: const Text('Back up on this phone')),
           const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _restore,
-            style: OutlinedButton.styleFrom(foregroundColor: C.red),
-            icon: const Icon(Icons.restore),
-            label: const Text('Restore from a backup file'),
-          ),
+          const Text('Your company data is also kept on the BRV server: a new or replaced device receives it automatically when it is added. '
+              'This file is an extra copy for your records.', style: muted),
         ]),
       );
 }

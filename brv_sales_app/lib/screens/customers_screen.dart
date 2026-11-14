@@ -77,7 +77,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       'credit_limit': numIn(limit.text) ?? 0,
     };
     if (x == null) {
-      await db.insert('customers', {...vals, 'created_at': nowIso()});
+      await Db.ins(db, 'customers', {...vals, 'created_at': nowIso()});
     } else {
       await db.update('customers', vals, where: 'id = ?', whereArgs: [x['id']]);
     }

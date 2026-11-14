@@ -139,7 +139,7 @@ class _PurchaseFormState extends State<PurchaseForm> {
     final name = await ask(context, 'New supplier', label: 'Name');
     if (name == null || name.trim().isEmpty) return;
     final db = await Db.get();
-    final id = await db.insert('suppliers', {'name': name.trim(), 'created_at': nowIso()});
+    final id = await Db.ins(db, 'suppliers', {'name': name.trim(), 'created_at': nowIso()});
     await _reloadSuppliers();
     setState(() => _sup = id);
   }
@@ -445,7 +445,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     final db = await Db.get();
     final vals = {'name': name.text.trim(), 'phone': phone.text.trim(), 'email': email.text.trim(), 'tax_pin': pin.text.trim()};
     if (x == null) {
-      await db.insert('suppliers', {...vals, 'created_at': nowIso()});
+      await Db.ins(db, 'suppliers', {...vals, 'created_at': nowIso()});
     } else {
       await db.update('suppliers', vals, where: 'id = ?', whereArgs: [x['id']]);
     }

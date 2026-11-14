@@ -1,7 +1,33 @@
-# BRV Pos Sales
+# BRV Pos: Manager, Sales and Licence
 
-Offline point of sale for Android phones and handheld POS devices, by BRV Integrated Systems.
-Everything is kept on the device (no internet needed). It is separate from the BRV POS eTIMS app.
+Three Android apps built from this folder, all using the BRV Cloud server (`brv_cloud/`):
+
+| App | Who | What |
+|---|---|---|
+| **BRV Licence** | You (BRV, the developer) | Create companies, give licence days, set how many user devices each company may use, activate device codes, suspend. |
+| **BRV Pos Manager** | The company's manager | Full system: dashboard, products, stock, purchases, requisitions, customers, accounting, reports, users / PINs / roles and rights, business settings, printer, and **Devices** (add or remove user devices). |
+| **BRV Pos Sales** | Staff devices (phones, handhelds) | Sell, shifts, requisitions, stock, customers, own sales; what each person may do follows the rights the manager sets. |
+
+Every device works **offline** and syncs with the server when online (every minute, after each sale, when opened).
+The licence counts down by the day, also offline; the server's date is used when online, so winding the phone clock back does not help.
+
+## Server (once)
+On your Mac (file in Downloads):
+
+    ssh root@167.172.53.12 'bash -s' < ~/Downloads/brv_cloud_install.sh
+
+It prints the **developer key**. Point DNS `pos.brvsystems.co.ke` (A record) to the server. Until DNS works, the apps can use
+`http://167.172.53.12:8095` (tap the BRV logo 5 times on the code screen to change the server).
+
+## Selling to a company (e.g. Company A)
+1. BRV Licence > **+ Company**: name, phone, licence days (e.g. 365), user devices allowed (e.g. 2).
+2. Install **BRV Pos Manager** on the manager's phone and open it (with internet): it shows a code like `MXXX-XXXX-XXXX`.
+3. BRV Licence > the company > **Manager code**: pick the waiting phone (or type the code). The manager's phone opens by itself.
+4. The manager sets up the business (name, KRA PIN, VAT) and their own PIN, then adds products, users and rights.
+5. Staff devices: install **BRV Pos Sales**, open it: it shows `SXXX-XXXX-XXXX`. The manager: More > **Devices and licence** > Add device
+   and types the code. Only as many devices as you allowed; for more, raise the limit in BRV Licence (the + button).
+6. Renew: BRV Licence > company > **Add days**. Not paid: switch **Licence active** off (devices stop at their next sync).
+   Replace a lost manager phone: activate the new phone's code with **Manager code** (the old one is switched off); it receives all data.
 
 ## What it does
 - **Sell**: product grid with categories, search and barcode, cart with quantity / discount / price change (by right),
@@ -21,13 +47,12 @@ Everything is kept on the device (no internet needed). It is separate from the B
 - **Reports**: summary, by item, staff, payment, day, category, VAT, stock value, customers owing, suppliers owed. Print or share as PDF.
 - **Owner dashboard**: today / weekly / monthly sales, orders, average sale, gross profit, revenue chart against the previous
   period, orders chart, trending items, latest orders, staff, payments, open shifts, low stock, waiting requisitions.
-- **Backup**: one file in Downloads/BRV Pos Sales/Backups, made automatically at every shift close; share it to
-  Google Drive / Gmail / WhatsApp. Restore on a new device.
+- **Sync**: all devices of a company share products, stock, sales, users and settings through BRV Cloud. Each device keeps
+  working without internet; a cloud icon at the top shows what is waiting to be sent.
 
-## First start (owner)
-1. Install `BRV-Pos-Sales-64bit.apk` (use `-32bit` only if Android says the app is not compatible).
-2. Enter the business name, phone, KRA PIN (optional) and whether you are VAT registered.
-3. Enter your name and your PIN (twice). Write down the **recovery code** shown: it resets the owner PIN if forgotten.
+## First start (manager, after activation)
+1. Enter the business name, phone, KRA PIN (optional) and whether you are VAT registered.
+2. Enter your name and your PIN (twice). Write down the **recovery code** shown: it resets the owner PIN if forgotten.
 
 ## Set up the business (More / Stock)
 1. **Locations** (Stock > Locations): Main Store and Shop exist. Add Bar, Kitchen, Branch 2 as needed. A *store* gives stock,
@@ -59,5 +84,6 @@ More > Users and PINs > **+ User**: name, role, PIN (4-6 digits, different for e
 7. Owner: Home = dashboard; Reports for any period; Accounting for profit and loss and the balance sheet.
 
 ## Offline and several devices
-The app never needs internet. Each device keeps its own data. To move to a new device: on the old one
-More > Backup and restore > Back up and share; on the new one install, set up quickly, then Restore from that file.
+Selling never needs internet. Sales made offline are sent when the device is online again; the manager's dashboard shows
+them after that. Receipt numbers include the device number (S-2-000015) so they never clash. Users and PINs are the same
+on every device of the company. A new device gets everything when it is added.

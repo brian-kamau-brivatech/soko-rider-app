@@ -13,7 +13,7 @@ class Db {
     final dir = await getDatabasesPath();
     _db = await openDatabase(p.join(dir, fileName), version: 1, onCreate: (db, v) async {
       await _schema(db);
-      await _seed(db);
+      await _syncSchema(db);
     }, onConfigure: (db) async {
       await db.execute('PRAGMA foreign_keys = OFF');
     });
@@ -34,7 +34,8 @@ class Db {
   ];
 
   static Future<void> _schema(Database db) async {
-    const id = 'id INTEGER PRIMARY KEY AUTOINCREMENT';
+    // ids are made by the app (device number x 10^10 + counter): unique across all devices of a company
+    const id = 'id INTEGER PRIMARY KEY';
     final ddl = <String>[
       'CREATE TABLE kv(k TEXT PRIMARY KEY, v TEXT)',
       'CREATE TABLE roles($id, name TEXT NOT NULL, perms TEXT NOT NULL DEFAULT \'\', system INTEGER DEFAULT 0)',
@@ -61,11 +62,11 @@ class Db {
           active INTEGER DEFAULT 1)''',
       '''CREATE TABLE shifts($id, number TEXT, user_id INTEGER, location_id INTEGER, opened_at TEXT, closed_at TEXT,
           opening_cash REAL DEFAULT 0, expected_cash REAL DEFAULT 0, counted_cash REAL DEFAULT 0, diff REAL DEFAULT 0,
-          state TEXT DEFAULT 'open', note TEXT DEFAULT '')''',
+          state TEXT DEFAULT 'open', note TEXT DEFAULT '', device_no INTEGER DEFAULT 0)''',
       '''CREATE TABLE sales($id, number TEXT, date TEXT, day TEXT, user_id INTEGER, shift_id INTEGER,
           location_id INTEGER, customer_id INTEGER, net REAL, tax REAL, discount REAL, total REAL, cost REAL,
           paid REAL, change REAL, kind TEXT DEFAULT 'sale', ref_sale_id INTEGER, state TEXT DEFAULT 'done',
-          note TEXT DEFAULT '', copies INTEGER DEFAULT 0)''',
+          note TEXT DEFAULT '', copies INTEGER DEFAULT 0, device_no INTEGER DEFAULT 0)''',
       'CREATE INDEX sales_day ON sales(day)',
       '''CREATE TABLE sale_lines($id, sale_id INTEGER, product_id INTEGER, name TEXT, qty REAL, price REAL,
           discount REAL DEFAULT 0, tax_rate REAL, tax REAL, total REAL, cost REAL)''',
@@ -119,22 +120,82 @@ class Db {
     ('6090', 'General expenses', 'expense', ''),
   ];
 
-  static Future<void> _seed(Database db) async {
-    for (final r in P.defaults) {
-      await db.insert('roles', {'name': r.$1, 'perms': r.$2.join(','), 'system': r.$1 == 'Owner' ? 1 : 0});
+  /// Starting data of a new company (roles, locations, accounts, payment methods). Made once, by the
+  /// first manager device; every other device receives it by sync.
+  static Future<void> seedCompany() async {
+    final db = await get();
+    if (await count('SELECT COUNT(*) FROM roles') > 0) return;
+    await db.transaction((tx) async {
+      for (final r in P.defaults) {
+        await ins(tx, 'roles', {'name': r.$1, 'perms': r.$2.join(','), 'system': r.$1 == 'Owner' ? 1 : 0});
+      }
+      await ins(tx, 'locations', {'name': 'Main Store', 'kind': 'store'});
+      await ins(tx, 'locations', {'name': 'Shop', 'kind': 'shop'});
+      await ins(tx, 'categories', {'name': 'General', 'color': 0});
+      final acc = <String, int>{};
+      for (final a in chart) {
+        acc[a.$4.isEmpty ? a.$1 : a.$4] = await ins(tx, 'accounts', {'code': a.$1, 'name': a.$2, 'type': a.$3, 'skey': a.$4});
+      }
+      await ins(tx, 'pay_methods', {'name': 'Cash', 'kind': 'cash', 'account_id': acc['cash']});
+      await ins(tx, 'pay_methods', {'name': 'M-Pesa', 'kind': 'mpesa', 'account_id': acc['mpesa']});
+      await ins(tx, 'pay_methods', {'name': 'Card', 'kind': 'card', 'account_id': acc['bank']});
+      await ins(tx, 'pay_methods', {'name': 'Credit (customer account)', 'kind': 'credit', 'account_id': acc['ar']});
+      // this device made the company: it runs the first set-up (business details, owner)
+      await tx.insert('kv', {'k': 'seeded_here', 'v': '1'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sync support: every change to a shared table is noted in "outbox" (by triggers) and sent to the
+  // BRV server; rows from other devices are written with the triggers muted.
+  // ---------------------------------------------------------------------------
+  static const synced = [
+    'roles', 'users', 'categories', 'products', 'locations', 'stock_moves', 'customers', 'suppliers', 'accounts',
+    'pay_methods', 'shifts', 'sales', 'sale_lines', 'sale_payments', 'purchases', 'purchase_lines', 'supplier_payments',
+    'customer_payments', 'requisitions', 'requisition_lines', 'expenses', 'journal', 'journal_lines', 'audit',
+  ];
+
+  /// Business settings shared by all devices (printer, paper, selling location stay per device).
+  static const sharedKeys = [
+    'business_name', 'phone', 'address', 'email', 'tax_pin', 'receipt_header', 'receipt_footer', 'vat_registered',
+    'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash',
+  ];
+
+  static Future<void> _syncSchema(Database db) async {
+    await db.execute('CREATE TABLE outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT, rid TEXT, deleted INTEGER DEFAULT 0)');
+    await db.execute('CREATE TABLE sync_state(muted INTEGER NOT NULL DEFAULT 0)');
+    await db.execute('INSERT INTO sync_state(muted) VALUES (0)');
+    const on = '(SELECT muted FROM sync_state) = 0';
+    for (final t in synced) {
+      await db.execute("CREATE TRIGGER ${t}_ai AFTER INSERT ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
+      await db.execute("CREATE TRIGGER ${t}_au AFTER UPDATE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
+      await db.execute("CREATE TRIGGER ${t}_ad AFTER DELETE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid, deleted) VALUES ('$t', OLD.id, 1); END");
     }
-    await db.insert('locations', {'name': 'Main Store', 'kind': 'store'});
-    await db.insert('locations', {'name': 'Shop', 'kind': 'shop'});
-    await db.insert('categories', {'name': 'General', 'color': 0});
-    final acc = <String, int>{};
-    for (final a in chart) {
-      acc[a.$4.isEmpty ? a.$1 : a.$4] =
-          await db.insert('accounts', {'code': a.$1, 'name': a.$2, 'type': a.$3, 'skey': a.$4});
-    }
-    await db.insert('pay_methods', {'name': 'Cash', 'kind': 'cash', 'account_id': acc['cash']});
-    await db.insert('pay_methods', {'name': 'M-Pesa', 'kind': 'mpesa', 'account_id': acc['mpesa']});
-    await db.insert('pay_methods', {'name': 'Card', 'kind': 'card', 'account_id': acc['bank']});
-    await db.insert('pay_methods', {'name': 'Credit (customer account)', 'kind': 'credit', 'account_id': acc['ar']});
+    final keys = sharedKeys.map((k) => "'$k'").join(',');
+    await db.execute("CREATE TRIGGER kv_ai AFTER INSERT ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
+    await db.execute("CREATE TRIGGER kv_au AFTER UPDATE ON kv WHEN $on AND NEW.k IN ($keys) BEGIN INSERT INTO outbox(tbl, rid) VALUES ('kv', NEW.k); END");
+  }
+
+  /// This device's number in its company (from the licence), used for ids and receipt numbers.
+  static int deviceNo = 0;
+
+  /// Inserts a row with a new id unique across the company's devices. Returns the id.
+  static Future<int> ins(DatabaseExecutor tx, String table, Map<String, Object?> values) async {
+    final r = await tx.rawQuery("SELECT v FROM kv WHERE k = 'id_seq'");
+    final next = (r.isEmpty ? 0 : n(r.first['v'])) + 1;
+    await tx.insert('kv', {'k': 'id_seq', 'v': '$next'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    final id = (deviceNo <= 0 ? 999 : deviceNo) * 10000000000 + next;
+    await tx.insert(table, {...values, 'id': id});
+    return id;
+  }
+
+  /// Stock per location is worked out from all movements (after rows arrive from other devices).
+  static Future<void> rebuildStock(DatabaseExecutor tx) async {
+    await tx.delete('stock');
+    await tx.execute(
+        'INSERT INTO stock(product_id, location_id, qty) SELECT pid, loc, SUM(q) FROM ('
+        'SELECT product_id pid, to_loc loc, qty q FROM stock_moves WHERE to_loc > 0 '
+        'UNION ALL SELECT product_id, from_loc, -qty FROM stock_moves WHERE from_loc > 0) GROUP BY pid, loc');
   }
 
   // ---------------------------------------------------------------------------
@@ -171,7 +232,8 @@ class Db {
     final r = await tx.rawQuery('SELECT v FROM kv WHERE k = ?', ['seq_$series']);
     final next = (r.isEmpty ? 0 : n(r.first['v'])) + 1;
     await tx.insert('kv', {'k': 'seq_$series', 'v': '$next'}, conflictAlgorithm: ConflictAlgorithm.replace);
-    return '$prefix${next.toString().padLeft(width, '0')}';
+    // the device number keeps receipt numbers unique across devices: S-2-000015
+    return '$prefix${deviceNo > 0 ? '$deviceNo-' : ''}${next.toString().padLeft(width, '0')}';
   }
 
   static Future<int> account(DatabaseExecutor tx, String key) async {
@@ -181,5 +243,5 @@ class Db {
   }
 
   static Future<void> audit(DatabaseExecutor tx, int userId, String action, String detail) async =>
-      tx.insert('audit', {'date': nowIso(), 'user_id': userId, 'action': action, 'detail': detail});
+      ins(tx, 'audit', {'date': nowIso(), 'user_id': userId, 'action': action, 'detail': detail});
 }

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import '../config.dart';
+import '../licence.dart';
 import '../perms.dart';
 import '../session.dart';
 import '../ui.dart';
 import 'dashboard.dart';
+import 'devices_screen.dart';
 import 'more_screen.dart';
 import 'reports_screen.dart';
 import 'sell_screen.dart';
@@ -26,6 +29,22 @@ class _Tab {
 class _ShellState extends State<Shell> {
   int _i = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    Licence.i.addListener(_redraw);
+  }
+
+  @override
+  void dispose() {
+    Licence.i.removeListener(_redraw);
+    super.dispose();
+  }
+
+  void _redraw() {
+    if (mounted) setState(() {});
+  }
+
   List<_Tab> _tabs() {
     final ses = Session.i;
     return [
@@ -42,8 +61,25 @@ class _ShellState extends State<Shell> {
   Widget build(BuildContext context) {
     final tabs = _tabs();
     if (_i >= tabs.length) _i = 0;
+    final days = Licence.i.daysLeft;
     return Scaffold(
-      body: IndexedStack(index: _i, children: [for (final t in tabs) t.page]),
+      body: Column(children: [
+        if (days <= 7)
+          Container(
+            width: double.infinity,
+            color: days <= 2 ? C.red : C.amber,
+            padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 6, 16, 6),
+            child: Text('Licence ends in $days day${days == 1 ? '' : 's'}. ${isManagerApp ? 'Contact BRV Integrated Systems to renew.' : 'Tell your manager.'}',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        Expanded(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: days <= 7,
+            child: IndexedStack(index: _i, children: [for (final t in tabs) t.page]),
+          ),
+        ),
+      ]),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(color: C.ink),
         child: SafeArea(
@@ -85,6 +121,7 @@ class TopBar extends StatelessWidget implements PreferredSizeWidget {
         title: Text(title, style: h(25)),
         actions: [
           ...actions,
+          const SyncChip(),
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: GestureDetector(

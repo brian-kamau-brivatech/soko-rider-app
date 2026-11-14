@@ -165,14 +165,14 @@ class Sales {
       final now = DateTime.now();
       final tax = r2(cart.tax);
       final cost = r2(cart.lines.where((l) => l.track).fold<double>(0, (a, l) => a + l.cost * l.qty));
-      saleId = await tx.insert('sales', {
-        'number': number, 'date': now.toIso8601String(), 'day': dayKey(now), 'user_id': ses.userId,
+      saleId = await Db.ins(tx, 'sales', {
+        'number': number, 'date': now.toIso8601String(), 'day': dayKey(now), 'user_id': ses.userId, 'device_no': Db.deviceNo,
         'shift_id': ses.shift == null ? null : n(ses.shift!['id']), 'location_id': location,
         'customer_id': cart.customerId, 'net': r2(total - tax), 'tax': tax, 'discount': r2(cart.discount),
         'total': total, 'cost': cost, 'paid': paid, 'change': change, 'kind': 'sale', 'state': 'done', 'note': note,
       });
       for (final l in cart.lines) {
-        await tx.insert('sale_lines', {
+        await Db.ins(tx, 'sale_lines', {
           'sale_id': saleId, 'product_id': l.productId, 'name': l.name, 'qty': l.qty, 'price': l.price,
           'discount': l.discount, 'tax_rate': l.taxRate, 'tax': l.tax, 'total': l.total, 'cost': l.cost,
         });
@@ -184,7 +184,7 @@ class Sales {
       final lines = <(int, double, double, String)>[];
       for (final p in pays) {
         if (p.amount.abs() < 0.004) continue;
-        await tx.insert('sale_payments', {'sale_id': saleId, 'method_id': p.methodId, 'amount': p.amount, 'ref': p.ref});
+        await Db.ins(tx, 'sale_payments', {'sale_id': saleId, 'method_id': p.methodId, 'amount': p.amount, 'ref': p.ref});
         final m = await tx.rawQuery('SELECT account_id FROM pay_methods WHERE id = ?', [p.methodId]);
         lines.add((n(m.first['account_id']), p.amount, 0.0, p.kind == 'credit' ? cart.customerName : ''));
       }
@@ -212,8 +212,8 @@ class Sales {
       final number = await Db.nextNumber(tx, 'refund', 'R-', 6);
       final now = DateTime.now();
       final location = n(sale['location_id']);
-      refundId = await tx.insert('sales', {
-        'number': number, 'date': now.toIso8601String(), 'day': dayKey(now), 'user_id': ses.userId,
+      refundId = await Db.ins(tx, 'sales', {
+        'number': number, 'date': now.toIso8601String(), 'day': dayKey(now), 'user_id': ses.userId, 'device_no': Db.deviceNo,
         'shift_id': ses.shift == null ? null : n(ses.shift!['id']), 'location_id': location,
         'customer_id': sale['customer_id'], 'net': -d(sale['net']), 'tax': -d(sale['tax']),
         'discount': -d(sale['discount']), 'total': -d(sale['total']), 'cost': -d(sale['cost']),
@@ -221,7 +221,7 @@ class Sales {
         'state': 'done', 'note': reason,
       });
       for (final l in await tx.rawQuery('SELECT * FROM sale_lines WHERE sale_id = ?', [saleId])) {
-        await tx.insert('sale_lines', {
+        await Db.ins(tx, 'sale_lines', {
           'sale_id': refundId, 'product_id': l['product_id'], 'name': l['name'], 'qty': -d(l['qty']), 'price': l['price'],
           'discount': -d(l['discount']), 'tax_rate': l['tax_rate'], 'tax': -d(l['tax']), 'total': -d(l['total']), 'cost': l['cost'],
         });
@@ -234,7 +234,7 @@ class Sales {
       final lines = <(int, double, double, String)>[];
       for (final p in await tx.rawQuery(
           'SELECT sp.*, m.account_id FROM sale_payments sp JOIN pay_methods m ON m.id = sp.method_id WHERE sp.sale_id = ?', [saleId])) {
-        await tx.insert('sale_payments', {'sale_id': refundId, 'method_id': p['method_id'], 'amount': -d(p['amount']), 'ref': 'refund'});
+        await Db.ins(tx, 'sale_payments', {'sale_id': refundId, 'method_id': p['method_id'], 'amount': -d(p['amount']), 'ref': 'refund'});
         lines.add((n(p['account_id']), 0.0, d(p['amount']), ''));
       }
       final tax = d(sale['tax']), net = d(sale['net']), cost = d(sale['cost']);
@@ -270,12 +270,12 @@ class Shifts {
     final ses = Session.i;
     final db = await Db.get();
     await db.transaction((tx) async {
-      final open = await tx.rawQuery("SELECT id FROM shifts WHERE user_id = ? AND state = 'open'", [ses.userId]);
-      if (open.isNotEmpty) throw SaleError('You already have an open shift.');
+      final open = await tx.rawQuery("SELECT id FROM shifts WHERE user_id = ? AND state = 'open' AND device_no = ?", [ses.userId, Db.deviceNo]);
+      if (open.isNotEmpty) throw SaleError('You already have an open shift on this device.');
       final number = await Db.nextNumber(tx, 'shift', 'SH-', 5);
-      await tx.insert('shifts', {
+      await Db.ins(tx, 'shifts', {
         'number': number, 'user_id': ses.userId, 'location_id': locationId, 'opened_at': nowIso(),
-        'opening_cash': openingCash, 'state': 'open',
+        'opening_cash': openingCash, 'state': 'open', 'device_no': Db.deviceNo,
       });
       await Db.audit(tx, ses.userId, 'shift_open', '$number float ${money(openingCash)}');
     });
