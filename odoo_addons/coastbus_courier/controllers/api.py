@@ -98,7 +98,11 @@ class CourierApi(http.Controller):
         routes = env['courier.route'].sudo().search([])
         staff = env['courier.staff'].sudo().search([])
         logo = ''
-        if company.logo_web:
+        # Odoo's placeholder ("Your logo") is not printed: only a logo uploaded for the company
+        default_logo = company._get_logo() if hasattr(company, '_get_logo') else b''
+        own = company.logo and (company.logo if isinstance(company.logo, bytes) else company.logo.encode()) != (
+            default_logo if isinstance(default_logo, bytes) else (default_logo or '').encode())
+        if own and company.logo_web:
             logo = company.logo_web.decode() if isinstance(company.logo_web, bytes) else company.logo_web
         # numbering continues after a reinstall: highest number this terminal already used
         pre = f"{cfg['wb_prefix']}-{dev.hub_id.code}-{dev.number:02d}-"

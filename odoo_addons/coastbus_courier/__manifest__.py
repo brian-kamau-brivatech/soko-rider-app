@@ -1,6 +1,6 @@
 {
     'name': 'Coast Bus Courier',
-    'version': '17.0.1.0',
+    'version': '17.0.1.1',
     'summary': 'Parcel intake, billing, loading, transit, offloading tally and collection for handheld terminals',
     'description': 'Back office for the Coast Bus Courier handheld app: branches, tariffs, waybills, manifests, offloading tally, losses, SMS, M-Pesa and an offline-first API for the terminals.',
     'author': 'BRV Integrated Systems',
