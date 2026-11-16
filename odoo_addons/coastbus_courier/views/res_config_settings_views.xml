@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_courier" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.courier</field>
+        <field name="model">res.config.settings</field>
+        <field name="priority" eval="60"/>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="Courier" string="Courier" name="coastbus_courier" groups="coastbus_courier.group_courier_manager">
+                    <block title="Charges" name="cb_charges">
+                        <setting string="Volumetric weight" help="Volumetric kg = L × W × H (cm) ÷ this number">
+                            <field name="cb_vol_divisor"/>
+                        </setting>
+                        <setting string="Insurance" help="% of the declared value, when the customer insures the parcel">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-5" for="cb_insurance_pct"/><field name="cb_insurance_pct"/></div>
+                                <div class="row"><label class="col-lg-5" for="cb_insurance_min"/><field name="cb_insurance_min"/></div>
+                            </div>
+                        </setting>
+                        <setting string="VAT" help="Prices include VAT; the receipt shows the VAT part. Invoices use the tax chosen here (must be 'included in price').">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-5" for="cb_vat_pct"/><field name="cb_vat_pct"/></div>
+                                <div class="row"><label class="col-lg-5" for="cb_tax_id"/><field name="cb_tax_id"/></div>
+                            </div>
+                        </setting>
+                        <setting string="Payment methods on the terminals">
+                            <div class="content-group">
+                                <div><field name="cb_pay_cash"/><label for="cb_pay_cash"/></div>
+                                <div><field name="cb_pay_mpesa_code"/><label for="cb_pay_mpesa_code"/></div>
+                                <div><field name="cb_pay_mpesa_stk"/><label for="cb_pay_mpesa_stk"/></div>
+                                <div><field name="cb_pay_account"/><label for="cb_pay_account"/></div>
+                            </div>
+                        </setting>
+                    </block>
+                    <block title="Receipts, tracking &amp; collection" name="cb_receipts">
+                        <setting string="Receipt text">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-4" for="cb_receipt_footer"/><field name="cb_receipt_footer"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_terms"/><field name="cb_terms"/></div>
+                            </div>
+                        </setting>
+                        <setting string="Tracking link" help="Printed as a QR code on receipts and sent by SMS">
+                            <field name="cb_track_url" placeholder="https://courier.coastbus.co.ke/t/"/>
+                        </setting>
+                        <setting string="Collection code" help="The receiver gets a code by SMS at arrival; without it, ID + supervisor PIN">
+                            <field name="cb_collect_needs_otp"/>
+                        </setting>
+                        <setting string="Free storage days"><field name="cb_storage_days"/></setting>
+                        <setting string="Waybill numbers" help="PREFIX-BRANCH-TERMINAL-NUMBER, e.g. CB-MSA-07-00012"><field name="cb_wb_prefix"/></setting>
+                        <setting string="Terminal auto-lock" help="Minutes without use before the terminal asks for a PIN again"><field name="cb_idle_lock_minutes"/></setting>
+                    </block>
+                    <block title="SMS" name="cb_sms">
+                        <setting string="SMS provider" help="Until a provider is set, SMS wait in the queue and go out once it is set">
+                            <field name="cb_sms_provider"/>
+                            <div class="content-group mt-2" invisible="cb_sms_provider != 'africastalking'">
+                                <div class="row"><label class="col-lg-4" for="cb_at_username"/><field name="cb_at_username"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_at_api_key"/><field name="cb_at_api_key" password="True"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_at_sender_id"/><field name="cb_at_sender_id"/></div>
+                            </div>
+                            <div class="content-group mt-2" invisible="cb_sms_provider != 'http'">
+                                <div class="row"><label class="col-lg-4" for="cb_http_url"/><field name="cb_http_url"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_http_method"/><field name="cb_http_method"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_http_headers"/><field name="cb_http_headers"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_http_body"/><field name="cb_http_body"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_http_sender"/><field name="cb_http_sender"/></div>
+                            </div>
+                            <div class="content-group mt-2" invisible="cb_sms_provider == 'none'">
+                                <div class="row"><label class="col-lg-4" for="cb_sms_test_phone"/><field name="cb_sms_test_phone"/></div>
+                                <button name="action_cb_test_sms" type="object" string="Send test SMS" class="btn-link" icon="oi-arrow-right"/>
+                            </div>
+                        </setting>
+                        <setting string="When to send">
+                            <div class="content-group">
+                                <div><field name="cb_sms_sender_notice"/><label for="cb_sms_sender_notice"/></div>
+                                <div><field name="cb_sms_receiver_notice"/><label for="cb_sms_receiver_notice"/></div>
+                                <div class="text-muted">Arrival (with the collection code) and collection SMS are always sent.</div>
+                            </div>
+                        </setting>
+                        <setting string="Messages" help="Placeholders: {waybill} {sender} {receiver} {origin} {dest} {total} {link} {otp} {collector} {date} {pieces}">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-4" for="cb_sms_tpl_booked_sender"/><field name="cb_sms_tpl_booked_sender"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_sms_tpl_booked_receiver"/><field name="cb_sms_tpl_booked_receiver"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_sms_tpl_arrived_receiver"/><field name="cb_sms_tpl_arrived_receiver"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_sms_tpl_collected_sender"/><field name="cb_sms_tpl_collected_sender"/></div>
+                            </div>
+                        </setting>
+                    </block>
+                    <block title="M-Pesa" name="cb_mpesa">
+                        <setting string="M-Pesa journal" help="Payments by M-Pesa (code or STK) are posted here">
+                            <field name="cb_mpesa_journal_id"/>
+                        </setting>
+                        <setting string="STK push (Daraja)" help="Credentials from developer.safaricom.co.ke">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_env"/><field name="cb_mpesa_env"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_type"/><field name="cb_mpesa_type"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_shortcode"/><field name="cb_mpesa_shortcode"/></div>
+                                <div class="row" invisible="cb_mpesa_type != 'till'"><label class="col-lg-4" for="cb_mpesa_till"/><field name="cb_mpesa_till"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_consumer_key"/><field name="cb_mpesa_consumer_key"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_consumer_secret"/><field name="cb_mpesa_consumer_secret" password="True"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_passkey"/><field name="cb_mpesa_passkey" password="True"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_mpesa_callback_url"/><field name="cb_mpesa_callback_url"/></div>
+                            </div>
+                        </setting>
+                    </block>
+                    <block title="Loss liability" name="cb_loss">
+                        <setting string="Liability entries" help="When a loss is confirmed against a driver: debit the driver, credit claims payable. Leave empty to skip.">
+                            <div class="content-group">
+                                <div class="row"><label class="col-lg-4" for="cb_driver_receivable_account_id"/><field name="cb_driver_receivable_account_id"/></div>
+                                <div class="row"><label class="col-lg-4" for="cb_claims_account_id"/><field name="cb_claims_account_id"/></div>
+                            </div>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_courier_settings" model="ir.actions.act_window">
+        <field name="name">Settings</field>
+        <field name="res_model">res.config.settings</field>
+        <field name="view_mode">form</field>
+        <field name="target">inline</field>
+        <field name="context">{'module': 'coastbus_courier', 'bin_size': False}</field>
+    </record>
+</odoo>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="seq_courier_discrepancy" model="ir.sequence">
+            <field name="name">Courier incident</field>
+            <field name="code">courier.discrepancy</field>
+            <field name="prefix">INC-%(y)s%(month)s-</field>
+            <field name="padding">4</field>
+        </record>
+
+        <record id="product_courier_freight" model="product.product">
+            <field name="name">Courier freight</field>
+            <field name="type">service</field>
+            <field name="list_price">0</field>
+            <field name="sale_ok">True</field>
+            <field name="purchase_ok">False</field>
+        </record>
+        <record id="product_courier_insurance" model="product.product">
+            <field name="name">Courier insurance</field>
+            <field name="type">service</field>
+            <field name="list_price">0</field>
+            <field name="sale_ok">True</field>
+            <field name="purchase_ok">False</field>
+        </record>
+
+        <!-- defaults (booleans must exist: Odoo removes a setting when it is unticked) -->
+        <record id="cfg_pay_cash" model="ir.config_parameter"><field name="key">coastbus.pay_cash</field><field name="value">True</field></record>
+        <record id="cfg_pay_mpesa_code" model="ir.config_parameter"><field name="key">coastbus.pay_mpesa_code</field><field name="value">True</field></record>
+        <record id="cfg_pay_account" model="ir.config_parameter"><field name="key">coastbus.pay_account</field><field name="value">True</field></record>
+        <record id="cfg_sms_sender" model="ir.config_parameter"><field name="key">coastbus.sms_sender_notice</field><field name="value">True</field></record>
+        <record id="cfg_sms_receiver" model="ir.config_parameter"><field name="key">coastbus.sms_receiver_notice</field><field name="value">True</field></record>
+        <record id="cfg_collect_otp" model="ir.config_parameter"><field name="key">coastbus.collect_needs_otp</field><field name="value">True</field></record>
+        <record id="cfg_vol" model="ir.config_parameter"><field name="key">coastbus.vol_divisor</field><field name="value">5000</field></record>
+        <record id="cfg_ins" model="ir.config_parameter"><field name="key">coastbus.insurance_pct</field><field name="value">1</field></record>
+        <record id="cfg_vat" model="ir.config_parameter"><field name="key">coastbus.vat_pct</field><field name="value">16</field></record>
+        <record id="cfg_storage" model="ir.config_parameter"><field name="key">coastbus.storage_days</field><field name="value">30</field></record>
+    </data>
+
+    <data>
+        <record id="cron_courier_sms" model="ir.cron">
+            <field name="name">Courier: send SMS</field>
+            <field name="model_id" ref="model_courier_sms"/>
+            <field name="state">code</field>
+            <field name="code">model._cron_send()</field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">minutes</field>
+            <field name="numbercall">-1</field>
+            <field name="active">True</field>
+        </record>
+        <record id="cron_courier_mpesa" model="ir.cron">
+            <field name="name">Courier: check pending M-Pesa</field>
+            <field name="model_id" ref="model_courier_mpesa"/>
+            <field name="state">code</field>
+            <field name="code">model.search([('state', '=', 'pending'), ('create_date', '&gt;', (datetime.datetime.now() - datetime.timedelta(minutes=30)).strftime('%Y-%m-%d %H:%M:%S'))]).query()</field>
+            <field name="interval_number">2</field>
+            <field name="interval_type">minutes</field>
+            <field name="numbercall">-1</field>
+            <field name="active">True</field>
+        </record>
+    </data>
+</odoo>

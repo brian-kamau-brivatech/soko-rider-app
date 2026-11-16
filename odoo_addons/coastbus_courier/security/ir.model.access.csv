@@ -1,0 +1,27 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_courier_hub_user,courier_hub user,model_courier_hub,group_courier_user,1,0,0,0
+access_courier_hub_manager,courier_hub manager,model_courier_hub,group_courier_manager,1,1,1,1
+access_courier_route_user,courier_route user,model_courier_route,group_courier_user,1,0,0,0
+access_courier_route_manager,courier_route manager,model_courier_route,group_courier_manager,1,1,1,1
+access_courier_vehicle_user,courier_vehicle user,model_courier_vehicle,group_courier_user,1,0,0,0
+access_courier_vehicle_manager,courier_vehicle manager,model_courier_vehicle,group_courier_manager,1,1,1,1
+access_courier_staff_user,courier_staff user,model_courier_staff,group_courier_user,1,0,0,0
+access_courier_staff_manager,courier_staff manager,model_courier_staff,group_courier_manager,1,1,1,1
+access_courier_device_user,courier_device user,model_courier_device,group_courier_user,1,0,0,0
+access_courier_device_manager,courier_device manager,model_courier_device,group_courier_manager,1,1,1,1
+access_courier_waybill_user,courier_waybill user,model_courier_waybill,group_courier_user,1,0,0,0
+access_courier_waybill_manager,courier_waybill manager,model_courier_waybill,group_courier_manager,1,1,1,1
+access_courier_manifest_user,courier_manifest user,model_courier_manifest,group_courier_user,1,0,0,0
+access_courier_manifest_manager,courier_manifest manager,model_courier_manifest,group_courier_manager,1,1,1,1
+access_courier_manifest_line_user,courier_manifest_line user,model_courier_manifest_line,group_courier_user,1,0,0,0
+access_courier_manifest_line_manager,courier_manifest_line manager,model_courier_manifest_line,group_courier_manager,1,1,1,1
+access_courier_discrepancy_user,courier_discrepancy user,model_courier_discrepancy,group_courier_user,1,1,0,0
+access_courier_discrepancy_manager,courier_discrepancy manager,model_courier_discrepancy,group_courier_manager,1,1,1,1
+access_courier_scan_user,courier_scan user,model_courier_scan,group_courier_user,1,0,0,0
+access_courier_scan_manager,courier_scan manager,model_courier_scan,group_courier_manager,1,1,1,0
+access_courier_event_user,courier_event user,model_courier_event,group_courier_user,1,0,0,0
+access_courier_event_manager,courier_event manager,model_courier_event,group_courier_manager,1,1,1,0
+access_courier_sms_user,courier_sms user,model_courier_sms,group_courier_user,1,0,0,0
+access_courier_sms_manager,courier_sms manager,model_courier_sms,group_courier_manager,1,1,1,1
+access_courier_mpesa_user,courier_mpesa user,model_courier_mpesa,group_courier_user,1,0,0,0
+access_courier_mpesa_manager,courier_mpesa manager,model_courier_mpesa,group_courier_manager,1,1,1,1

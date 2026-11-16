@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- branches -->
+    <record id="view_courier_hub_tree" model="ir.ui.view">
+        <field name="name">courier.hub.tree</field>
+        <field name="model">courier.hub</field>
+        <field name="arch" type="xml">
+            <tree editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="phone"/>
+                <field name="address"/>
+                <field name="cash_journal_id"/>
+                <field name="active" widget="boolean_toggle"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_courier_hub" model="ir.actions.act_window">
+        <field name="name">Branches</field>
+        <field name="res_model">courier.hub</field>
+        <field name="view_mode">tree</field>
+        <field name="context">{'active_test': False}</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Add your branches</p><p>e.g. Mombasa (MSA), Voi (VOI), Nairobi (NBO).</p></field>
+    </record>
+
+    <!-- routes / tariffs -->
+    <record id="view_courier_route_tree" model="ir.ui.view">
+        <field name="name">courier.route.tree</field>
+        <field name="model">courier.route</field>
+        <field name="arch" type="xml">
+            <tree editable="bottom">
+                <field name="origin_hub_id"/>
+                <field name="destination_hub_id"/>
+                <field name="base_fare"/>
+                <field name="base_kg"/>
+                <field name="rate_per_kg"/>
+                <field name="extra_piece_fee" optional="show"/>
+                <field name="min_charge"/>
+                <field name="transit_hours" optional="hide"/>
+                <field name="both_ways"/>
+                <field name="active" widget="boolean_toggle"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_courier_route" model="ir.actions.act_window">
+        <field name="name">Routes &amp; tariffs</field>
+        <field name="res_model">courier.route</field>
+        <field name="view_mode">tree</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Add a tariff</p>
+            <p>Charge = base fare (covers the base kg) + each extra kg × rate (+ each extra piece), never below the minimum. Chargeable kg is the larger of real and volumetric weight.</p></field>
+    </record>
+
+    <!-- vehicles -->
+    <record id="view_courier_vehicle_tree" model="ir.ui.view">
+        <field name="name">courier.vehicle.tree</field>
+        <field name="model">courier.vehicle</field>
+        <field name="arch" type="xml">
+            <tree editable="bottom">
+                <field name="name"/>
+                <field name="description"/>
+                <field name="capacity_kg"/>
+                <field name="active" widget="boolean_toggle"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_courier_vehicle" model="ir.actions.act_window">
+        <field name="name">Vehicles</field>
+        <field name="res_model">courier.vehicle</field>
+        <field name="view_mode">tree</field>
+        <field name="context">{'active_test': False}</field>
+    </record>
+
+    <!-- staff -->
+    <record id="view_courier_staff_tree" model="ir.ui.view">
+        <field name="name">courier.staff.tree</field>
+        <field name="model">courier.staff</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="role"/>
+                <field name="hub_id"/>
+                <field name="phone"/>
+                <field name="has_pin"/>
+                <field name="active" widget="boolean_toggle"/>
+            </tree>
+        </field>
+    </record>
+    <record id="view_courier_staff_form" model="ir.ui.view">
+        <field name="name">courier.staff.form</field>
+        <field name="model">courier.staff</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <div class="oe_title"><h1><field name="name" placeholder="Full name"/></h1></div>
+                    <group>
+                        <group>
+                            <field name="role"/>
+                            <field name="hub_id"/>
+                            <field name="code"/>
+                            <field name="phone"/>
+                            <field name="id_number"/>
+                        </group>
+                        <group>
+                            <field name="new_pin" password="True" placeholder="4 to 6 digits"/>
+                            <field name="has_pin"/>
+                            <field name="partner_id"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <p class="text-muted">Staff sign in on the terminals by tapping their name and typing this PIN (works offline). Drivers also confirm shortages with their PIN.</p>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_courier_staff" model="ir.actions.act_window">
+        <field name="name">Staff &amp; PINs</field>
+        <field name="res_model">courier.staff</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'active_test': False}</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Add terminal users</p><p>Office clerks, loaders/drivers and supervisors, each with a PIN.</p></field>
+    </record>
+
+    <!-- terminals -->
+    <record id="view_courier_device_tree" model="ir.ui.view">
+        <field name="name">courier.device.tree</field>
+        <field name="model">courier.device</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="number"/>
+                <field name="name"/>
+                <field name="hub_id"/>
+                <field name="activation_key"/>
+                <field name="state_text" string="Status"/>
+                <field name="model_name"/>
+                <field name="last_seen"/>
+                <field name="active" widget="boolean_toggle"/>
+            </tree>
+        </field>
+    </record>
+    <record id="view_courier_device_form" model="ir.ui.view">
+        <field name="name">courier.device.form</field>
+        <field name="model">courier.device</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_new_key" type="object" string="New key" confirm="The terminal using this record stops working until it is activated again with the new key. Continue?"/>
+                </header>
+                <sheet>
+                    <div class="alert alert-info" role="alert" invisible="activated">
+                        On the terminal, open the Coast Bus Courier app, type this server address and the key:
+                        <h2 class="mt-2"><field name="activation_key" class="d-inline"/></h2>
+                    </div>
+                    <div class="oe_title"><h1><field name="name"/></h1></div>
+                    <group>
+                        <group>
+                            <field name="hub_id"/>
+                            <field name="number"/>
+                            <field name="active"/>
+                        </group>
+                        <group>
+                            <field name="state_text" string="Status"/>
+                            <field name="model_name"/>
+                            <field name="app_version"/>
+                            <field name="device_uid"/>
+                            <field name="last_seen"/>
+                            <field name="activated" invisible="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_courier_device" model="ir.actions.act_window">
+        <field name="name">Terminals</field>
+        <field name="res_model">courier.device</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'active_test': False}</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Add a handheld terminal</p><p>Each terminal belongs to a branch. Create it here, then type the activation key on the terminal.</p></field>
+    </record>
+
+    <record id="action_courier_accounts" model="ir.actions.act_window">
+        <field name="name">Account customers</field>
+        <field name="res_model">res.partner</field>
+        <field name="view_mode">tree,form</field>
+        <field name="domain">[('courier_account', '=', True)]</field>
+        <field name="context">{'default_courier_account': True, 'default_is_company': True}</field>
+    </record>
+    <record id="view_partner_form_courier" model="ir.ui.view">
+        <field name="name">res.partner.form.courier</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='category_id']" position="after">
+                <field name="courier_account"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

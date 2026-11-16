@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_courier_manifest_tree" model="ir.ui.view">
+        <field name="name">courier.manifest.tree</field>
+        <field name="model">courier.manifest</field>
+        <field name="arch" type="xml">
+            <tree decoration-danger="state == 'discrepancy'" decoration-success="state == 'reconciled'" decoration-warning="state == 'in_transit'">
+                <field name="name"/>
+                <field name="origin_hub_id"/>
+                <field name="destination_hub_id"/>
+                <field name="vehicle_id"/>
+                <field name="driver_id"/>
+                <field name="departure_time"/>
+                <field name="arrival_time"/>
+                <field name="total_waybills"/>
+                <field name="total_pieces" string="Loaded"/>
+                <field name="received_pieces" string="Offloaded"/>
+                <field name="missing_pieces" string="Missing"/>
+                <field name="total_weight" optional="hide"/>
+                <field name="state" widget="badge" decoration-danger="state == 'discrepancy'" decoration-success="state == 'reconciled'" decoration-warning="state == 'in_transit'"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_courier_manifest_form" model="ir.ui.view">
+        <field name="name">courier.manifest.form</field>
+        <field name="model">courier.manifest</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <field name="state" widget="statusbar" statusbar_visible="loading,in_transit,reconciled"/>
+                </header>
+                <sheet>
+                    <div class="alert alert-danger" role="alert" invisible="state != 'discrepancy'">
+                        Shortage: <field name="missing_pieces" class="d-inline"/> piece(s) loaded at origin were not offloaded. See the investigations below.
+                    </div>
+                    <div class="oe_title"><h1><field name="name" readonly="1"/></h1>
+                        <h3><field name="origin_hub_id" class="d-inline"/> → <field name="destination_hub_id" class="d-inline"/></h3></div>
+                    <group>
+                        <group string="Vehicle">
+                            <field name="vehicle_id"/>
+                            <field name="driver_id"/>
+                            <field name="dispatcher_id"/>
+                            <field name="device_id"/>
+                        </group>
+                        <group string="Trip">
+                            <field name="opened_at"/>
+                            <field name="departure_time"/>
+                            <field name="arrival_time"/>
+                            <field name="receiver_staff_id"/>
+                            <field name="supervisor_id"/>
+                            <field name="driver_ack"/>
+                        </group>
+                        <group string="Tally">
+                            <field name="total_waybills"/>
+                            <field name="total_pieces"/>
+                            <field name="received_pieces"/>
+                            <field name="missing_pieces"/>
+                        </group>
+                        <group string="Load">
+                            <field name="total_weight"/>
+                            <field name="total_value"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Parcels" name="lines">
+                            <field name="line_ids" readonly="1">
+                                <tree decoration-danger="state == 'short'" decoration-success="state == 'ok'" decoration-warning="state == 'extra'">
+                                    <field name="waybill_id"/>
+                                    <field name="destination_hub_id"/>
+                                    <field name="pieces"/>
+                                    <field name="loaded_pieces"/>
+                                    <field name="loaded_at"/>
+                                    <field name="received_pieces"/>
+                                    <field name="received_hub_id"/>
+                                    <field name="received_at"/>
+                                    <field name="state" widget="badge" decoration-danger="state == 'short'" decoration-success="state == 'ok'"/>
+                                </tree>
+                            </field>
+                        </page>
+                        <page string="Investigations" name="disc" invisible="not discrepancy_ids">
+                            <field name="discrepancy_ids" readonly="1"/>
+                        </page>
+                        <page string="Notes" name="notes"><field name="note"/></page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_courier_manifest_search" model="ir.ui.view">
+        <field name="name">courier.manifest.search</field>
+        <field name="model">courier.manifest</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="vehicle_id"/>
+                <field name="driver_id"/>
+                <field name="origin_hub_id"/>
+                <field name="destination_hub_id"/>
+                <filter name="transit" string="On the road" domain="[('state', '=', 'in_transit')]"/>
+                <filter name="disc" string="Shortages" domain="[('state', '=', 'discrepancy')]"/>
+                <group expand="0" string="Group by">
+                    <filter name="g_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="g_driver" string="Driver" context="{'group_by': 'driver_id'}"/>
+                    <filter name="g_vehicle" string="Vehicle" context="{'group_by': 'vehicle_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_courier_manifest" model="ir.actions.act_window">
+        <field name="name">Trip manifests</field>
+        <field name="res_model">courier.manifest</field>
+        <field name="view_mode">tree,form</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">No trips yet</p><p>Manifests are created on the terminals when parcels are scanned onto a vehicle.</p></field>
+    </record>
+</odoo>

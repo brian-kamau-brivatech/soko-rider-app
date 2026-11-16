@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_courier_root" name="Courier" sequence="25" web_icon="coastbus_courier,static/description/icon.png"
+              groups="coastbus_courier.group_courier_user"/>
+
+    <menuitem id="menu_courier_ops" name="Operations" parent="menu_courier_root" sequence="10"/>
+    <menuitem id="menu_courier_waybills" name="Waybills" parent="menu_courier_ops" action="action_courier_waybill" sequence="10"/>
+    <menuitem id="menu_courier_waiting" name="Waiting for collection" parent="menu_courier_ops" action="action_courier_waybill_waiting" sequence="20"/>
+    <menuitem id="menu_courier_manifests" name="Trip manifests" parent="menu_courier_ops" action="action_courier_manifest" sequence="30"/>
+    <menuitem id="menu_courier_disc" name="Shortages &amp; losses" parent="menu_courier_ops" action="action_courier_discrepancy" sequence="40"/>
+
+    <menuitem id="menu_courier_reports" name="Reports" parent="menu_courier_root" sequence="20"/>
+    <menuitem id="menu_courier_rep_rev" name="Revenue &amp; volumes" parent="menu_courier_reports" action="action_courier_waybill_report" sequence="10"/>
+    <menuitem id="menu_courier_rep_scan" name="Custody log" parent="menu_courier_reports" action="action_courier_scan" sequence="20"/>
+    <menuitem id="menu_courier_rep_sms" name="SMS" parent="menu_courier_reports" action="action_courier_sms" sequence="30"/>
+    <menuitem id="menu_courier_rep_mpesa" name="M-Pesa STK requests" parent="menu_courier_reports" action="action_courier_mpesa" sequence="40"/>
+    <menuitem id="menu_courier_rep_event" name="Terminal sync log" parent="menu_courier_reports" action="action_courier_event" sequence="50"
+              groups="coastbus_courier.group_courier_manager"/>
+
+    <menuitem id="menu_courier_config" name="Configuration" parent="menu_courier_root" sequence="90" groups="coastbus_courier.group_courier_manager"/>
+    <menuitem id="menu_courier_settings" name="Settings" parent="menu_courier_config" action="action_courier_settings" sequence="1"/>
+    <menuitem id="menu_courier_hubs" name="Branches" parent="menu_courier_config" action="action_courier_hub" sequence="10"/>
+    <menuitem id="menu_courier_routes" name="Routes &amp; tariffs" parent="menu_courier_config" action="action_courier_route" sequence="20"/>
+    <menuitem id="menu_courier_vehicles" name="Vehicles" parent="menu_courier_config" action="action_courier_vehicle" sequence="30"/>
+    <menuitem id="menu_courier_staff" name="Staff &amp; PINs" parent="menu_courier_config" action="action_courier_staff" sequence="40"/>
+    <menuitem id="menu_courier_devices" name="Terminals" parent="menu_courier_config" action="action_courier_device" sequence="50"/>
+    <menuitem id="menu_courier_accounts" name="Account customers" parent="menu_courier_config" action="action_courier_accounts" sequence="60"/>
+</odoo>

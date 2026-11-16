@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_courier_scan_tree" model="ir.ui.view">
+        <field name="name">courier.scan.tree</field>
+        <field name="model">courier.scan</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0" decoration-danger="result != 'ok'">
+                <field name="scanned_at"/>
+                <field name="waybill_id"/>
+                <field name="kind"/>
+                <field name="piece"/>
+                <field name="hub_id"/>
+                <field name="manifest_id"/>
+                <field name="staff_id"/>
+                <field name="device_id"/>
+                <field name="result"/>
+                <field name="note"/>
+                <field name="received_at" optional="hide"/>
+            </tree>
+        </field>
+    </record>
+    <record id="view_courier_scan_search" model="ir.ui.view">
+        <field name="name">courier.scan.search</field>
+        <field name="model">courier.scan</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="waybill_id"/>
+                <field name="manifest_id"/>
+                <field name="staff_id"/>
+                <filter name="problems" string="Problems" domain="[('result', '!=', 'ok')]"/>
+                <group expand="0" string="Group by">
+                    <filter name="g_kind" string="Kind" context="{'group_by': 'kind'}"/>
+                    <filter name="g_staff" string="Staff" context="{'group_by': 'staff_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+    <record id="action_courier_scan" model="ir.actions.act_window">
+        <field name="name">Custody log</field>
+        <field name="res_model">courier.scan</field>
+        <field name="view_mode">tree</field>
+    </record>
+
+    <record id="view_courier_sms_tree" model="ir.ui.view">
+        <field name="name">courier.sms.tree</field>
+        <field name="model">courier.sms</field>
+        <field name="arch" type="xml">
+            <tree create="0" decoration-danger="state == 'failed'" decoration-muted="state == 'no_provider'">
+                <header><button name="action_requeue" type="object" string="Send again"/></header>
+                <field name="create_date"/>
+                <field name="phone"/>
+                <field name="kind"/>
+                <field name="waybill_id"/>
+                <field name="body"/>
+                <field name="state" widget="badge" decoration-success="state == 'sent'" decoration-danger="state == 'failed'"/>
+                <field name="error" optional="show"/>
+                <field name="sent_at" optional="hide"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_courier_sms" model="ir.actions.act_window">
+        <field name="name">SMS</field>
+        <field name="res_model">courier.sms</field>
+        <field name="view_mode">tree</field>
+    </record>
+
+    <record id="view_courier_mpesa_tree" model="ir.ui.view">
+        <field name="name">courier.mpesa.tree</field>
+        <field name="model">courier.mpesa</field>
+        <field name="arch" type="xml">
+            <tree create="0" decoration-success="state == 'paid'" decoration-danger="state == 'failed'">
+                <field name="create_date"/>
+                <field name="name"/>
+                <field name="phone"/>
+                <field name="amount" sum="Total"/>
+                <field name="state"/>
+                <field name="receipt"/>
+                <field name="result_desc"/>
+                <field name="staff_id"/>
+                <field name="device_id"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_courier_mpesa" model="ir.actions.act_window">
+        <field name="name">M-Pesa STK requests</field>
+        <field name="res_model">courier.mpesa</field>
+        <field name="view_mode">tree</field>
+    </record>
+
+    <record id="view_courier_event_tree" model="ir.ui.view">
+        <field name="name">courier.event.tree</field>
+        <field name="model">courier.event</field>
+        <field name="arch" type="xml">
+            <tree create="0" decoration-danger="not ok">
+                <field name="create_date"/>
+                <field name="kind"/>
+                <field name="device_id"/>
+                <field name="staff_id"/>
+                <field name="ok"/>
+                <field name="error"/>
+                <field name="uuid" optional="hide"/>
+                <field name="payload" optional="hide"/>
+            </tree>
+        </field>
+    </record>
+    <record id="view_courier_event_search" model="ir.ui.view">
+        <field name="name">courier.event.search</field>
+        <field name="model">courier.event</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="kind"/>
+                <field name="device_id"/>
+                <filter name="failed" string="Rejected" domain="[('ok', '=', False)]"/>
+            </search>
+        </field>
+    </record>
+    <record id="action_courier_event" model="ir.actions.act_window">
+        <field name="name">Terminal sync log</field>
+        <field name="res_model">courier.event</field>
+        <field name="view_mode">tree</field>
+    </record>
+</odoo>

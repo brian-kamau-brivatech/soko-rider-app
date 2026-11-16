@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_courier_waybill_tree" model="ir.ui.view">
+        <field name="name">courier.waybill.tree</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <tree decoration-danger="state == 'lost'" decoration-success="state == 'collected'" decoration-info="state == 'arrived'"
+                  decoration-muted="state == 'cancelled'">
+                <field name="name"/>
+                <field name="booked_at"/>
+                <field name="origin_hub_id"/>
+                <field name="destination_hub_id"/>
+                <field name="sender_name"/>
+                <field name="receiver_name"/>
+                <field name="receiver_phone" optional="show"/>
+                <field name="pieces" optional="show"/>
+                <field name="chargeable_weight" sum="kg" optional="show"/>
+                <field name="total" sum="Total"/>
+                <field name="payment_mode" optional="show"/>
+                <field name="manifest_id" optional="hide"/>
+                <field name="vehicle_id" optional="hide"/>
+                <field name="booked_by_id" optional="hide"/>
+                <field name="state" widget="badge" decoration-danger="state == 'lost'" decoration-success="state in ('arrived', 'collected')"
+                       decoration-warning="state in ('in_transit', 'loaded', 'at_hub')"/>
+                <field name="currency_id" column_invisible="1"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_courier_waybill_form" model="ir.ui.view">
+        <field name="name">courier.waybill.form</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_retry_invoice" type="object" string="Create invoice" invisible="invoice_id or state == 'cancelled' or payment_mode == 'receiver'"
+                            groups="coastbus_courier.group_courier_manager"/>
+                    <button name="action_resend_arrival_sms" type="object" string="Resend arrival SMS" invisible="state != 'arrived'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="booked,loaded,in_transit,arrived,collected"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_invoice" type="object" class="oe_stat_button" icon="fa-file-text-o" invisible="not invoice_id">
+                            <span>Invoice</span>
+                        </button>
+                    </div>
+                    <div class="alert alert-danger" role="alert" invisible="not invoice_error">
+                        Accounting: <field name="invoice_error" class="d-inline"/>
+                    </div>
+                    <div class="alert alert-warning" role="alert" invisible="not price_note">
+                        <field name="price_note" class="d-inline"/>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                        <h3><field name="origin_hub_id" readonly="1" class="d-inline"/> → <field name="destination_hub_id" class="d-inline"/></h3>
+                    </div>
+                    <group>
+                        <group string="Sender">
+                            <field name="sender_name"/>
+                            <field name="sender_phone" widget="phone"/>
+                            <field name="sender_id_no"/>
+                            <field name="sender_partner_id"/>
+                        </group>
+                        <group string="Receiver">
+                            <field name="receiver_name"/>
+                            <field name="receiver_phone" widget="phone"/>
+                            <field name="receiver_partner_id"/>
+                            <field name="track_link" widget="url"/>
+                        </group>
+                        <group string="Parcel">
+                            <field name="description"/>
+                            <field name="pieces"/>
+                            <field name="weight"/>
+                            <label for="length" string="Size L × W × H (cm)"/>
+                            <div class="o_row"><field name="length"/>×<field name="width"/>×<field name="height"/></div>
+                            <field name="vol_weight"/>
+                            <field name="chargeable_weight"/>
+                            <field name="fragile"/>
+                            <field name="insured"/>
+                            <field name="declared_value"/>
+                        </group>
+                        <group string="Charges">
+                            <field name="fare"/>
+                            <field name="insurance"/>
+                            <field name="total" class="fw-bold"/>
+                            <field name="vat_amount"/>
+                            <field name="payment_mode"/>
+                            <field name="payment_ref"/>
+                            <field name="account_partner_id" invisible="payment_mode != 'account'"/>
+                            <field name="paid"/>
+                            <field name="invoice_id" readonly="1"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                        <group string="Custody">
+                            <field name="current_hub_id"/>
+                            <field name="manifest_id"/>
+                            <field name="vehicle_id"/>
+                            <field name="custodian_id"/>
+                            <field name="arrived_at"/>
+                            <field name="days_waiting" invisible="state != 'arrived'"/>
+                        </group>
+                        <group string="Booking / collection">
+                            <field name="booked_at"/>
+                            <field name="booked_by_id"/>
+                            <field name="device_id"/>
+                            <field name="collected_at" invisible="state != 'collected'"/>
+                            <field name="collected_by_name" invisible="state != 'collected'"/>
+                            <field name="collected_id_no" invisible="state != 'collected'"/>
+                            <field name="collect_method" invisible="state != 'collected'"/>
+                            <field name="collected_staff_id" invisible="state != 'collected'"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Custody log" name="scans">
+                            <field name="scan_ids" readonly="1">
+                                <tree>
+                                    <field name="scanned_at"/>
+                                    <field name="kind"/>
+                                    <field name="piece"/>
+                                    <field name="hub_id"/>
+                                    <field name="manifest_id"/>
+                                    <field name="staff_id"/>
+                                    <field name="device_id"/>
+                                    <field name="result" widget="badge" decoration-danger="result != 'ok'"/>
+                                    <field name="note"/>
+                                </tree>
+                            </field>
+                        </page>
+                        <page string="Investigations" name="disc" invisible="not discrepancy_ids">
+                            <field name="discrepancy_ids" readonly="1"/>
+                        </page>
+                        <page string="SMS" name="sms">
+                            <field name="sms_ids" readonly="1">
+                                <tree><field name="create_date"/><field name="phone"/><field name="kind"/><field name="state"/><field name="body"/></tree>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes"><field name="note"/></page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_courier_waybill_search" model="ir.ui.view">
+        <field name="name">courier.waybill.search</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" filter_domain="['|', '|', '|', ('name', 'ilike', self), ('receiver_phone', 'ilike', self), ('sender_phone', 'ilike', self), ('receiver_name', 'ilike', self)]"/>
+                <field name="sender_name"/>
+                <field name="origin_hub_id"/>
+                <field name="destination_hub_id"/>
+                <field name="manifest_id"/>
+                <field name="vehicle_id"/>
+                <field name="booked_by_id"/>
+                <filter name="today" string="Booked today" domain="[('booked_at', '&gt;=', context_today().strftime('%Y-%m-%d'))]"/>
+                <separator/>
+                <filter name="open" string="Not yet collected" domain="[('state', 'in', ('booked', 'loaded', 'in_transit', 'at_hub', 'arrived'))]"/>
+                <filter name="transit" string="In transit" domain="[('state', 'in', ('loaded', 'in_transit'))]"/>
+                <filter name="arrived" string="Waiting for collection" domain="[('state', '=', 'arrived')]"/>
+                <filter name="lost" string="Missing" domain="[('state', '=', 'lost')]"/>
+                <separator/>
+                <filter name="unpaid" string="Account / unpaid" domain="[('paid', '=', False), ('state', '!=', 'cancelled')]"/>
+                <filter name="inv_err" string="Accounting problem" domain="[('invoice_error', '!=', False)]"/>
+                <group expand="0" string="Group by">
+                    <filter name="g_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="g_origin" string="From" context="{'group_by': 'origin_hub_id'}"/>
+                    <filter name="g_dest" string="To" context="{'group_by': 'destination_hub_id'}"/>
+                    <filter name="g_pay" string="Payment" context="{'group_by': 'payment_mode'}"/>
+                    <filter name="g_clerk" string="Clerk" context="{'group_by': 'booked_by_id'}"/>
+                    <filter name="g_day" string="Day" context="{'group_by': 'booked_at:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_courier_waybill_pivot" model="ir.ui.view">
+        <field name="name">courier.waybill.pivot</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <pivot string="Courier revenue" sample="1">
+                <field name="origin_hub_id" type="row"/>
+                <field name="booked_at" interval="month" type="col"/>
+                <field name="total" type="measure"/>
+                <field name="chargeable_weight" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="view_courier_waybill_graph" model="ir.ui.view">
+        <field name="name">courier.waybill.graph</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <graph string="Bookings" type="bar" sample="1">
+                <field name="booked_at" interval="day"/>
+                <field name="total" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <record id="view_courier_waybill_kanban" model="ir.ui.view">
+        <field name="name">courier.waybill.kanban</field>
+        <field name="model">courier.waybill</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" class="o_kanban_small_column" sample="1">
+                <field name="state"/>
+                <templates>
+                    <t t-name="kanban-box">
+                        <div class="oe_kanban_global_click">
+                            <strong><field name="name"/></strong>
+                            <div><field name="origin_hub_id"/> → <field name="destination_hub_id"/></div>
+                            <div class="text-muted"><field name="receiver_name"/> · <field name="pieces"/> pc · <field name="total"/></div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="action_courier_waybill" model="ir.actions.act_window">
+        <field name="name">Waybills</field>
+        <field name="res_model">courier.waybill</field>
+        <field name="view_mode">tree,form,kanban,pivot,graph</field>
+        <field name="context">{'search_default_open': 1}</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">No waybills yet</p><p>Parcels are booked at the counter on the handheld terminals and appear here when the terminal syncs.</p></field>
+    </record>
+    <record id="action_courier_waybill_report" model="ir.actions.act_window">
+        <field name="name">Revenue &amp; volumes</field>
+        <field name="res_model">courier.waybill</field>
+        <field name="view_mode">pivot,graph,tree</field>
+        <field name="domain">[('state', '!=', 'cancelled')]</field>
+    </record>
+    <record id="action_courier_waybill_waiting" model="ir.actions.act_window">
+        <field name="name">Waiting for collection</field>
+        <field name="res_model">courier.waybill</field>
+        <field name="view_mode">tree,form</field>
+        <field name="domain">[('state', '=', 'arrived')]</field>
+        <field name="context">{'group_by': 'destination_hub_id'}</field>
+    </record>
+</odoo>

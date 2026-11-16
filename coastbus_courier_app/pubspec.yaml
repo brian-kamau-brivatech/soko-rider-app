@@ -1,0 +1,23 @@
+name: coastbus_courier
+description: "Coast Bus Courier: parcel intake, billing, loading, offloading tally and collection on handheld terminals, synced with Odoo."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.2.2
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  crypto: ^3.0.3
+  http: ^1.2.0
+  barcode: ^2.2.8
+  mobile_scanner: ^7.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/app_icon.png
