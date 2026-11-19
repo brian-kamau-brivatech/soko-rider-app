@@ -311,6 +311,40 @@ class Etr {
     return 'KRA refused: ${res.message}';
   }
 
+  /// The number to try next. Several handhelds may sign on the same KRA PIN + branch through the same VSCU,
+  /// so they share one invoice sequence: never go below a number another handheld has already used (their
+  /// invoices arrive here by sync).
+  static Future<int> _startNumber() async {
+    final mine = await nextInvoice();
+    final seen = n((await Db.one("SELECT MAX(invc_no) m FROM etr_sales WHERE tin = ? AND bhf_id = ? AND status IN ('signed', 'pending')",
+        [tin, bhfId]))?['m']);
+    return mine > seen ? mine : seen + 1;
+  }
+
+  /// Sends a new invoice. When another handheld took the number first (not synced here yet), the VSCU answers
+  /// "already used" or "expected N": the number moves on and the invoice is sent again by itself.
+  static Future<(Map<String, dynamic>, VscuResult)> _sendNew(Map<String, dynamic> Function(int invc) make) async {
+    var invc = await _startNumber();
+    for (var tries = 1;; tries++) {
+      final payload = make(invc);
+      final res = await call('trnsSales/saveSales', payload);
+      if (res.ok || res.noAnswer || tries >= 30) return (payload, res);
+      if (res.duplicate) {
+        await _moveOn(invc);
+        final nx = await _startNumber();
+        invc = nx > invc ? nx : invc + 1;
+        continue;
+      }
+      final want = expectedInvoiceNo(res.msg);
+      if (want != null && want > 0 && want != invc) {
+        await setNextInvoice(want);
+        invc = want;
+        continue;
+      }
+      return (payload, res);
+    }
+  }
+
   /// Sign the cart with KRA, then save it here. Returns the sale id and a warning when KRA did not answer.
   static Future<(int, String?)> sell(Cart cart, List<Pay> pays) async {
     if (!ready) throw SaleError('The KRA device is not set up yet. A technician sets it up in More > KRA eTIMS device.');
@@ -327,14 +361,14 @@ class Etr {
       lines.add(_calc(productId: l.productId, p: p, name: l.name, tax: l.taxCd, qty: l.qty, price: l.price, discount: l.discount));
     }
     final cust = cart.customerId == null ? null : await Db.one('SELECT name, phone, tax_pin FROM customers WHERE id = ?', [cart.customerId]);
-    final invc = await nextInvoice();
-    final payload = buildSalePayload(
-      tin: tin, bhfId: bhfId, invcNo: invc, trdInvcNo: _number('INV', invc), lines: lines, paymentCode: paymentCode(pays),
-      when: DateTime.now(), custTin: s(cust?['tax_pin']).trim().toUpperCase(), custNm: s(cust?['name']).trim(),
-      custMblNo: s(cust?['phone']).trim(), userId: '${Session.i.userId}', userName: Session.i.name.isEmpty ? appTitle : Session.i.name,
-      taxableInclVat: inclVat,
-    );
-    final res = await call('trnsSales/saveSales', payload);
+    final when = DateTime.now();
+    final (payload, res) = await _sendNew((invc) => buildSalePayload(
+          tin: tin, bhfId: bhfId, invcNo: invc, trdInvcNo: _number('INV', invc), lines: lines, paymentCode: paymentCode(pays),
+          when: when, custTin: s(cust?['tax_pin']).trim().toUpperCase(), custNm: s(cust?['name']).trim(),
+          custMblNo: s(cust?['phone']).trim(), userId: '${Session.i.userId}', userName: Session.i.name.isEmpty ? appTitle : Session.i.name,
+          taxableInclVat: inclVat,
+        ));
+    final invc = n(payload['invcNo']);
     if (!res.ok && !res.noAnswer) throw SaleError(await _refusal(invc, res));
     late int saleId;
     try {
@@ -377,14 +411,14 @@ class Etr {
     try {
       op = Map<String, dynamic>.from(jsonDecode(s(org['payload'])) as Map);
     } catch (_) {}
-    final invc = await nextInvoice();
-    final payload = buildSalePayload(
-      tin: tin, bhfId: bhfId, invcNo: invc, trdInvcNo: _number('CN', invc), lines: lines, paymentCode: s(org['pmt_ty_cd']),
-      when: DateTime.now(), creditNote: true, orgInvcNo: n(org['invc_no']), refundReason: reasonCd, custTin: s(op['custTin']),
-      custNm: s(op['custNm']), custMblNo: s(op['custMblNo']), userId: '${Session.i.userId}',
-      userName: Session.i.name.isEmpty ? appTitle : Session.i.name, taxableInclVat: inclVat,
-    );
-    final res = await call('trnsSales/saveSales', payload);
+    final when = DateTime.now();
+    final (payload, res) = await _sendNew((invc) => buildSalePayload(
+          tin: tin, bhfId: bhfId, invcNo: invc, trdInvcNo: _number('CN', invc), lines: lines, paymentCode: s(org['pmt_ty_cd']),
+          when: when, creditNote: true, orgInvcNo: n(org['invc_no']), refundReason: reasonCd, custTin: s(op['custTin']),
+          custNm: s(op['custNm']), custMblNo: s(op['custMblNo']), userId: '${Session.i.userId}',
+          userName: Session.i.name.isEmpty ? appTitle : Session.i.name, taxableInclVat: inclVat,
+        ));
+    final invc = n(payload['invcNo']);
     if (!res.ok && !res.noAnswer) throw SaleError(await _refusal(invc, res));
     final refundId = await Sales.refund(saleId, reason: note);
     if (res.ok) {
@@ -419,6 +453,17 @@ class Etr {
       await db.update('etr_sales', {'error': res.message}, where: 'id = ?', whereArgs: [id]);
       return '${res.message} It is still waiting (same invoice number).';
     }
+    if (res.duplicate) {
+      // another handheld on this PIN + branch signed this number (its invoice has synced here): ours was
+      // never signed, so sign it again with the next free number
+      final other = await Db.one(
+          "SELECT id FROM etr_sales WHERE tin = ? AND bhf_id = ? AND invc_no = ? AND id <> ? AND status = 'signed'", [tin, bhfId, invc, id]);
+      if (other != null) {
+        await _moveOn(invc);
+        await db.update('etr_sales', {'status': 'failed'}, where: 'id = ?', whereArgs: [id]);
+        return signAgain(id);
+      }
+    }
     final msg = await _refusal(invc, res);
     await db.update('etr_sales', {'status': 'failed', 'error': msg}, where: 'id = ?', whereArgs: [id]);
     return '$msg\nUse "Sign again" to sign it with a new invoice number.';
@@ -431,7 +476,7 @@ class Etr {
     final waiting = await pending();
     if (waiting != null && n(waiting['id']) != id) return 'KRA invoice ${waiting['trd_invc_no']} is waiting. Retry it first.';
     final payload = Map<String, dynamic>.from(jsonDecode(s(row['payload'])) as Map);
-    final invc = await nextInvoice();
+    final invc = await _startNumber();
     final credit = s(row['kind']) == 'R';
     payload['invcNo'] = invc;
     payload['trdInvcNo'] = _number(credit ? 'CN' : 'INV', invc);
