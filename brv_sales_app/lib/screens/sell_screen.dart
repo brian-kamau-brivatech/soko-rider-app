@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../bus.dart';
+import '../config.dart';
 import '../db.dart';
+import '../etr/etr.dart';
 import '../fmt.dart';
 import '../perms.dart';
 import '../receipt.dart';
@@ -461,7 +463,16 @@ class _PayScreenState extends State<PayScreen> {
     setState(() => _busy = true);
     try {
       final change = r2(_paid - _total);
-      final id = await Sales.checkout(Cart.i, _pays);
+      var id = 0;
+      String? warning;
+      if (isEtrApp) {
+        // KRA signs first; a refused sale is not saved and the cart stays
+        final r = await Etr.sell(Cart.i, _pays);
+        id = r.$1;
+        warning = r.$2;
+      } else {
+        id = await Sales.checkout(Cart.i, _pays);
+      }
       Cart.i.clear();
       changed();
       if (!mounted) return;
@@ -471,7 +482,7 @@ class _PayScreenState extends State<PayScreen> {
       if (!mounted) return;
       final nav = Navigator.of(context);
       nav.popUntil((r) => r.isFirst);
-      await nav.push(MaterialPageRoute(builder: (_) => DoneScreen(saleId: id, change: change)));
+      await nav.push(MaterialPageRoute(builder: (_) => DoneScreen(saleId: id, change: change, warning: warning)));
     } on SaleError catch (e) {
       if (mounted) toast(context, e.message);
     } catch (e) {
@@ -552,7 +563,7 @@ class _PayScreenState extends State<PayScreen> {
           child: FilledButton(
             onPressed: _busy || left > 0.004 || _pays.isEmpty ? null : _finish,
             style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
-            child: Text(_busy ? 'Saving...' : 'Complete sale'),
+            child: Text(_busy ? (isEtrApp ? 'Signing with KRA...' : 'Saving...') : 'Complete sale'),
           ),
         ),
       ),
@@ -571,8 +582,9 @@ class _PayScreenState extends State<PayScreen> {
 Future<bool> printSale(int id, {bool copy = false}) async {
   final sale = await Sales.sale(id);
   if (sale == null) return false;
+  final etr = await Etr.forSale(id);
   final ok = await Printer.printLines(
-      Printer.saleLines(sale, await Sales.lines(id), await Sales.payments(id), copy: copy), '${copy ? 'Copy ' : ''}${sale['number']}');
+      Printer.saleLines(sale, await Sales.lines(id), await Sales.payments(id), copy: copy, etr: etr), '${copy ? 'Copy ' : ''}${sale['number']}');
   if (copy) {
     final db = await Db.get();
     await db.rawUpdate('UPDATE sales SET copies = copies + 1 WHERE id = ?', [id]);
@@ -583,7 +595,8 @@ Future<bool> printSale(int id, {bool copy = false}) async {
 class DoneScreen extends StatelessWidget {
   final int saleId;
   final double change;
-  const DoneScreen({super.key, required this.saleId, required this.change});
+  final String? warning; // ETR: saved but KRA did not answer yet
+  const DoneScreen({super.key, required this.saleId, required this.change, this.warning});
   @override
   Widget build(BuildContext context) => Scaffold(
         body: SafeArea(
@@ -598,10 +611,18 @@ class DoneScreen extends StatelessWidget {
                 child: const Icon(Icons.check_rounded, color: C.green, size: 56),
               ),
               const SizedBox(height: 18),
-              Text('Sale complete', style: h(26)),
+              Text(warning == null ? (isEtrApp ? 'Signed by KRA' : 'Sale complete') : 'Saved, waiting for KRA', style: h(26)),
               if (change > 0) ...[
                 const SizedBox(height: 8),
                 Text('Change: ${money(change)}', style: h(30, color: C.gold)),
+              ],
+              if (warning != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: box(color: C.amberLight, border: false),
+                  child: Text(warning!, style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
               ],
               const Spacer(),
               Row(children: [

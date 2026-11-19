@@ -38,7 +38,7 @@ class Settings extends ChangeNotifier {
   String get taxPin => get('tax_pin');
   String get receiptHeader => get('receipt_header');
   String get receiptFooter => get('receipt_footer', 'Thank you for your business!');
-  bool get vatRegistered => flag('vat_registered', true);
+  bool get vatRegistered => isEtrApp || flag('vat_registered', true); // a KRA ETR always charges VAT by tax group
   bool get requireShift => isSalesApp || flag('require_shift', true); // sales devices always sell inside a session
   bool get blockNoStock => flag('block_no_stock', true);
   bool get printAfterSale => flag('print_after_sale', true);

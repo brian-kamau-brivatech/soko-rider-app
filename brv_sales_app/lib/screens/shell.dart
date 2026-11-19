@@ -71,7 +71,7 @@ class _ShellState extends State<Shell> {
             width: double.infinity,
             color: days <= 2 ? C.red : C.amber,
             padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 6, 16, 6),
-            child: Text('Licence ends in $days day${days == 1 ? '' : 's'}. ${isManagerApp ? 'Contact BRV Integrated Systems to renew.' : 'Tell your manager.'}',
+            child: Text('Licence ends in $days day${days == 1 ? '' : 's'}. ${isOwnerApp ? 'Contact BRV Integrated Systems to renew.' : 'Tell your manager.'}',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
           ),
         Expanded(

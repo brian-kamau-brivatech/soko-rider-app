@@ -1,15 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
+import 'config.dart';
 import 'db.dart';
+import 'etr/kra.dart' show k2;
 import 'fmt.dart';
 import 'ledger.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'stock.dart';
+import 'tax.dart';
 
 class CartLine {
   final int productId;
   final String name;
+  final String taxCd; // A exempt, B 16%, C zero-rated, E 8%
   final double taxRate;
   final double cost;
   final bool track;
@@ -17,11 +21,16 @@ class CartLine {
   double qty;
   double discount; // amount off this line
   CartLine({required this.productId, required this.name, required this.price, required this.taxRate,
-      required this.cost, required this.track, this.qty = 1, this.discount = 0});
+      required this.cost, required this.track, this.taxCd = 'B', this.qty = 1, this.discount = 0});
 
-  double get gross => r2(price * qty);
-  double get total => r2(gross - discount);
-  double get tax => Settings.i.vatRegistered && taxRate > 0 ? r2(total * taxRate / (100 + taxRate)) : 0.0;
+  double get gross => isEtrApp ? k2(price * qty) : r2(price * qty);
+  double get total => isEtrApp ? k2(gross - discount) : r2(gross - discount);
+  double get tax {
+    if (!Settings.i.vatRegistered || taxRate <= 0) return 0.0;
+    // the ETR uses KRA's own maths (total - taxable), so the sale here matches the signed invoice to the cent
+    if (isEtrApp) return k2(total - k2(total * 100 / (100 + taxRate)));
+    return r2(total * taxRate / (100 + taxRate));
+  }
 }
 
 /// The sale being built on the Sell screen.
@@ -46,7 +55,7 @@ class Cart extends ChangeNotifier {
       lines[i].qty += q;
     } else {
       lines.add(CartLine(
-          productId: id, name: s(p['name']), price: d(p['price']), taxRate: d(p['tax_rate']), cost: d(p['cost']),
+          productId: id, name: s(p['name']), price: d(p['price']), taxCd: taxCdOf(p), taxRate: taxRateOf(p), cost: d(p['cost']),
           track: n(p['track']) == 1, qty: q));
     }
     notifyListeners();
@@ -109,11 +118,19 @@ class Sales {
     return d(a.first['v']) - d(b.first['v']);
   }
 
-  /// Saves the sale: lines, payments, stock out, journal. Returns the sale id.
-  static Future<int> checkout(Cart cart, List<Pay> given, {String note = ''}) async {
-    final ses = Session.i;
-    // work on copies: if the sale is refused, the cashier's payments stay as typed
+  /// Every check of [checkout] without saving anything (the ETR runs it before asking KRA to sign).
+  static Future<void> validate(Cart cart, List<Pay> given) async {
     final pays = [for (final p in given) Pay(p.methodId, p.kind, p.name, p.amount, ref: p.ref)];
+    _checkPays(cart, pays);
+    final credit = pays.where((p) => p.kind == 'credit').fold<double>(0, (a, p) => a + p.amount);
+    final location = await sellingLocation();
+    final db = await Db.get();
+    await db.transaction((tx) => _checkStockAndCredit(tx, cart, credit, location));
+  }
+
+  /// Payment checks; takes the change out of the cash. Returns the change.
+  static double _checkPays(Cart cart, List<Pay> pays) {
+    final ses = Session.i;
     if (cart.isEmpty) throw SaleError('The sale is empty.');
     if (Settings.i.requireShift && ses.shift == null) throw SaleError('Open a session first (cash drawer).');
     final total = r2(cart.total);
@@ -121,7 +138,7 @@ class Sales {
     if (paid + 0.004 < total) throw SaleError('Paid ${money(paid)} is less than the total ${money(total)}.');
     final credit = pays.where((p) => p.kind == 'credit').fold<double>(0, (a, p) => a + p.amount);
     if (credit > 0 && cart.customerId == null) throw SaleError('Choose the customer for a credit sale.');
-    var change = r2(paid - total);
+    final change = r2(paid - total);
     if (change > 0) {
       final cash = pays.where((p) => p.kind == 'cash').toList();
       final cashIn = cash.fold<double>(0, (a, p) => a + p.amount);
@@ -133,10 +150,10 @@ class Sales {
         left = r2(left - take);
       }
     }
-    final location = await sellingLocation();
-    final db = await Db.get();
-    late int saleId;
-    await db.transaction((tx) async {
+    return change;
+  }
+
+  static Future<void> _checkStockAndCredit(DatabaseExecutor tx, Cart cart, double credit, int location) async {
       if (credit > 0) {
         final c = await tx.rawQuery('SELECT name, credit_limit FROM customers WHERE id = ?', [cart.customerId]);
         final limit = c.isEmpty ? 0.0 : d(c.first['credit_limit']);
@@ -162,6 +179,22 @@ class Sales {
           }
         }
       }
+  }
+
+  /// Saves the sale: lines, payments, stock out, journal. Returns the sale id.
+  static Future<int> checkout(Cart cart, List<Pay> given, {String note = ''}) async {
+    final ses = Session.i;
+    // work on copies: if the sale is refused, the cashier's payments stay as typed
+    final pays = [for (final p in given) Pay(p.methodId, p.kind, p.name, p.amount, ref: p.ref)];
+    final paid = r2(pays.fold<double>(0, (a, p) => a + p.amount)); // as typed, before the change is taken out of the cash
+    final change = _checkPays(cart, pays);
+    final total = r2(cart.total);
+    final credit = pays.where((p) => p.kind == 'credit').fold<double>(0, (a, p) => a + p.amount);
+    final location = await sellingLocation();
+    final db = await Db.get();
+    late int saleId;
+    await db.transaction((tx) async {
+      await _checkStockAndCredit(tx, cart, credit, location);
       final number = await Db.nextNumber(tx, 'sale', 'S-', 6);
       final now = DateTime.now();
       final tax = r2(cart.tax);
@@ -175,7 +208,7 @@ class Sales {
       for (final l in cart.lines) {
         await Db.ins(tx, 'sale_lines', {
           'sale_id': saleId, 'product_id': l.productId, 'name': l.name, 'qty': l.qty, 'price': l.price,
-          'discount': l.discount, 'tax_rate': l.taxRate, 'tax': l.tax, 'total': l.total, 'cost': l.cost,
+          'discount': l.discount, 'tax_rate': l.taxRate, 'tax_cd': l.taxCd, 'tax': l.tax, 'total': l.total, 'cost': l.cost,
         });
         if (l.track) {
           await Stock.move(tx, productId: l.productId, from: location, to: 0, qty: l.qty, cost: l.cost,
@@ -224,7 +257,7 @@ class Sales {
       for (final l in await tx.rawQuery('SELECT * FROM sale_lines WHERE sale_id = ?', [saleId])) {
         await Db.ins(tx, 'sale_lines', {
           'sale_id': refundId, 'product_id': l['product_id'], 'name': l['name'], 'qty': -d(l['qty']), 'price': l['price'],
-          'discount': -d(l['discount']), 'tax_rate': l['tax_rate'], 'tax': -d(l['tax']), 'total': -d(l['total']), 'cost': l['cost'],
+          'discount': -d(l['discount']), 'tax_rate': l['tax_rate'], 'tax_cd': l['tax_cd'], 'tax': -d(l['tax']), 'total': -d(l['total']), 'cost': l['cost'],
         });
         final p = await tx.rawQuery('SELECT track FROM products WHERE id = ?', [l['product_id']]);
         if (p.isNotEmpty && n(p.first['track']) == 1) {
@@ -259,7 +292,8 @@ class Sales {
       'LEFT JOIN locations l ON l.id = s.location_id WHERE s.id = ?',
       [id]);
 
-  static Future<List<Map<String, Object?>>> lines(int id) => Db.q('SELECT * FROM sale_lines WHERE sale_id = ? ORDER BY id', [id]);
+  static Future<List<Map<String, Object?>>> lines(int id) => Db.q(
+      'SELECT l.*, p.vat_ref FROM sale_lines l LEFT JOIN products p ON p.id = l.product_id WHERE l.sale_id = ? ORDER BY l.id', [id]);
 
   static Future<List<Map<String, Object?>>> payments(int id) => Db.q(
       'SELECT sp.*, m.name, m.kind FROM sale_payments sp JOIN pay_methods m ON m.id = sp.method_id WHERE sp.sale_id = ?', [id]);

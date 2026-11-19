@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config.dart';
+import '../etr/etr.dart';
+import '../etr/etr_screen.dart';
 import '../perms.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -12,6 +14,7 @@ import 'settings_screen.dart';
 import 'shell.dart';
 import 'shift_screen.dart';
 import 'users_screen.dart';
+import 'vat_refs_screen.dart';
 
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
@@ -64,22 +67,28 @@ class MoreScreen extends StatelessWidget {
           item(Icons.receipt_long_outlined, ses.can(P.allSales) ? 'Sales' : 'My sales', const SalesScreen()),
           if (ses.can(P.customers) || ses.can(P.customerPay)) item(Icons.people_outline, 'Customers', const CustomersScreen(), sub: 'Credit, balances, payments'),
         ]),
-        if (isManagerApp && (ses.can(P.accounting) || ses.can(P.expenses)))
+        if (isEtrApp && (ses.can(P.settings) || ses.can(P.sell)))
+          Group('KRA eTIMS', [
+            item(Icons.verified_outlined, 'KRA eTIMS device', const EtrScreen(), sub: Etr.ready ? 'Ready · waiting invoices, items, set-up' : 'Not set up: technician set-up'),
+            if (ses.can(P.settings)) item(Icons.gavel_outlined, 'VAT references', const VatRefsScreen(), sub: vatRefSpecifyText()),
+          ]),
+        if (isOwnerApp && (ses.can(P.accounting) || ses.can(P.expenses)))
           Group('Money', [
             if (ses.can(P.accounting)) item(Icons.account_balance_outlined, 'Accounting', const AccountingScreen(), sub: 'P&L, balance sheet, journal'),
             if (ses.can(P.expenses)) item(Icons.receipt_outlined, 'Expenses', const ExpensesScreen()),
           ]),
-        if (isManagerApp && (ses.can(P.users) || ses.can(P.roles) || ses.can(P.settings) || ses.can(P.backup)))
+        if (isOwnerApp && (ses.can(P.users) || ses.can(P.roles) || ses.can(P.settings) || ses.can(P.backup)))
           Group('Administration', [
             if (ses.can(P.users)) item(Icons.manage_accounts_outlined, 'Users and PINs', const UsersScreen()),
             if (ses.can(P.roles) && !ses.can(P.users)) item(Icons.admin_panel_settings_outlined, 'Roles and rights', const RolesScreen()),
             if (ses.can(P.settings)) item(Icons.store_outlined, 'Business settings', const BusinessSettings()),
             if (ses.can(P.settings)) item(Icons.payments_outlined, 'Payment methods', const PayMethodsScreen()),
+            if (ses.can(P.settings) && !isEtrApp) item(Icons.gavel_outlined, 'VAT references', const VatRefsScreen(), sub: vatRefSpecifyText()),
             if (ses.can(P.settings)) item(Icons.print_outlined, 'Printer', const PrinterScreen()),
             if (ses.can(P.backup)) item(Icons.backup_outlined, 'Backup and restore', const BackupScreen()),
             if (ses.owner || ses.can(P.users)) item(Icons.history, 'Activity log', const AuditScreen()),
           ]),
-        if (!isManagerApp || !ses.can(P.settings))
+        if (!isOwnerApp || !ses.can(P.settings))
           Group('Device', [item(Icons.print_outlined, 'Printer', const PrinterScreen())]),
         const SizedBox(height: 8),
         Center(child: Image.asset('assets/brv_logo.png', height: 70)),
@@ -88,3 +97,5 @@ class MoreScreen extends StatelessWidget {
     );
   }
 }
+
+String vatRefSpecifyText() => Settings.i.get('vat_ref_mode') == 'specify' ? 'Specify: exact paragraph per item' : 'General reference per tax group';

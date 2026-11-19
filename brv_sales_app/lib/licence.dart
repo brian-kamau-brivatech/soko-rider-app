@@ -40,7 +40,7 @@ class Licence extends ChangeNotifier {
     _secret = _p.getString('lic_secret') ?? '';
     if (code.isEmpty || _secret.isEmpty) {
       final r = Random.secure();
-      code = (isManagerApp ? 'M' : 'S') + List.generate(11, (_) => _alphabet[r.nextInt(_alphabet.length)]).join();
+      code = (isEtrApp ? 'E' : (isManagerApp ? 'M' : 'S')) + List.generate(11, (_) => _alphabet[r.nextInt(_alphabet.length)]).join();
       _secret = base64Url.encode(List<int>.generate(32, (_) => r.nextInt(256)));
       await _p.setString('lic_code', code);
       await _p.setString('lic_secret', _secret);
@@ -97,7 +97,7 @@ class Licence extends ChangeNotifier {
     _tick();
     try {
       final r = await Net.call(server, 'POST', '/hello', body: {
-        'code': code, 'secret': _secret, 'app': isManagerApp ? 'manager' : 'sales', 'model': defaultTargetPlatform.name,
+        'code': code, 'secret': _secret, 'app': isEtrApp ? 'etr' : (isManagerApp ? 'manager' : 'sales'), 'model': defaultTargetPlatform.name,
       });
       final st = '${r['status']}';
       if (r['token'] != null) {

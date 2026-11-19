@@ -3,6 +3,7 @@ import '../bus.dart';
 import '../db.dart';
 import '../fmt.dart';
 import '../receipt.dart';
+import '../tax.dart';
 import '../ui.dart';
 import 'accounting_screen.dart' show Period, PeriodBar;
 import 'shell.dart';
@@ -127,10 +128,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
       }
       case 'vat': {
         for (final r in await Db.q(
-            'SELECT l.tax_rate rate, SUM(l.total - l.tax) taxable, SUM(l.tax) tax FROM sale_lines l JOIN sales s ON s.id = l.sale_id '
-            'WHERE s.date >= ? AND s.date < ? GROUP BY l.tax_rate ORDER BY l.tax_rate DESC',
+            // tax group A/B/C/E; old lines without a group: 16 -> B, 8 -> E, 0 -> A
+            "SELECT CASE WHEN COALESCE(l.tax_cd,'') <> '' THEN l.tax_cd WHEN l.tax_rate >= 15 THEN 'B' WHEN l.tax_rate >= 7 THEN 'E' ELSE 'A' END grp, "
+            'SUM(l.total - l.tax) taxable, SUM(l.tax) tax FROM sale_lines l JOIN sales s ON s.id = l.sale_id '
+            'WHERE s.date >= ? AND s.date < ? GROUP BY grp ORDER BY grp',
             [a, b])) {
-          out.add(PLine.left('VAT ${qty(d(r['rate']))}%', bold: true));
+          out.add(PLine.left(taxGroup(s(r['grp'])).label, bold: true));
           out.add(PLine.row('  Sales excl. VAT', money(d(r['taxable']), symbol: false)));
           out.add(PLine.row('  VAT', money(d(r['tax']), symbol: false)));
         }

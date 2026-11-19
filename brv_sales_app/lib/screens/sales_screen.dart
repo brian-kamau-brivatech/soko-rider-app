@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../bus.dart';
+import '../config.dart';
 import '../db.dart';
+import '../etr/etr.dart';
+import '../etr/kra.dart' show Kra, Code;
 import '../fmt.dart';
 import '../perms.dart';
 import '../receipt.dart';
@@ -36,7 +39,8 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _load() async {
     final all = Session.i.can(P.allSales);
     final r = await Db.q(
-        'SELECT s.*, u.name AS cashier, c.name AS customer FROM sales s LEFT JOIN users u ON u.id = s.user_id '
+        'SELECT s.*, u.name AS cashier, c.name AS customer, e.status AS kra FROM sales s LEFT JOIN users u ON u.id = s.user_id '
+        'LEFT JOIN etr_sales e ON e.id = s.id '
         'LEFT JOIN customers c ON c.id = s.customer_id WHERE s.day = ? ${all ? '' : 'AND s.user_id = ${Session.i.userId}'} ORDER BY s.id DESC',
         [dayKey(_day)]);
     if (mounted) setState(() => _rows = r);
@@ -96,6 +100,8 @@ class _SalesScreenState extends State<SalesScreen> {
                         trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
                           Text(money(d(r['total'])), style: h(14, color: refund ? C.red : C.text)),
                           if (refund) const Pill('Refund', fg: C.red, bg: C.redLight),
+                          if (s(r['kra']) == 'pending') const Pill('KRA waiting', fg: C.amber, bg: C.amberLight),
+                          if (s(r['kra']) == 'failed') const Pill('Not signed', fg: C.red, bg: C.redLight),
                           if (s(r['state']) == 'refunded') const Pill('Refunded', fg: C.amber, bg: C.amberLight),
                         ]),
                       ),
@@ -119,6 +125,8 @@ class _SaleDetailState extends State<SaleDetail> {
   Map<String, Object?>? _sale;
   List<Map<String, Object?>> _lines = [];
   List<Map<String, Object?>> _pays = [];
+  Map<String, Object?>? _etr;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -130,12 +138,36 @@ class _SaleDetailState extends State<SaleDetail> {
     final sale = await Sales.sale(widget.saleId);
     final l = await Sales.lines(widget.saleId);
     final p = await Sales.payments(widget.saleId);
+    final e = await Etr.forSale(widget.saleId);
     if (mounted) {
       setState(() {
         _sale = sale;
         _lines = l;
         _pays = p;
+        _etr = e;
       });
+    }
+  }
+
+  /// Retry / sign again / cancel an invoice KRA has not signed.
+  Future<void> _kra(String what) async {
+    setState(() => _busy = true);
+    try {
+      String? msg;
+      if (what == 'retry') msg = await Etr.retry(widget.saleId);
+      if (what == 'again') msg = await Etr.signAgain(widget.saleId);
+      if (what == 'cancel') {
+        if (!await confirm(context, 'Cancel this sale?', 'KRA did not sign it. The stock and money go back as if it was never sold.', ok: 'Cancel sale', danger: true)) return;
+        await Etr.cancelUnsigned(widget.saleId);
+        msg = 'Cancelled.';
+      }
+      changed();
+      if (mounted) toast(context, msg ?? 'Signed by KRA.');
+    } on SaleError catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _load();
     }
   }
 
@@ -151,15 +183,38 @@ class _SaleDetailState extends State<SaleDetail> {
       }
     }
     if (!mounted) return;
-    final reason = await ask(context, 'Refund ${sale['number']}', label: 'Reason', hint: 'e.g. returned, wrong item');
+    // KRA ETR: the refund is a credit note, signed by KRA first; KRA needs a reason code
+    Code? code;
+    if (isEtrApp && _etr != null) {
+      code = await showModalBottomSheet<Code>(
+        context: context,
+        isScrollControlled: true,
+        builder: (ctx) => SafeArea(
+          child: ListView(shrinkWrap: true, children: [
+            ListTile(title: Text('Credit note reason (KRA)', style: h(17))),
+            for (final c in Kra.refundReasons) ListTile(title: Text(c.name), onTap: () => Navigator.pop(ctx, c)),
+          ]),
+        ),
+      );
+      if (code == null || !mounted) return;
+    }
+    final reason = await ask(context, 'Refund ${sale['number']}', label: 'Note', initial: code?.name ?? '', hint: 'e.g. returned, wrong item');
     if (reason == null) return;
+    setState(() => _busy = true);
     try {
-      await Sales.refund(widget.saleId, reason: reason.trim());
+      String? warning;
+      if (isEtrApp) {
+        warning = (await Etr.refund(widget.saleId, reasonCd: code?.code ?? '06', note: reason.trim())).$2;
+      } else {
+        await Sales.refund(widget.saleId, reason: reason.trim());
+      }
       changed();
-      if (mounted) toast(context, 'Refunded. Stock returned.');
+      if (mounted) toast(context, warning ?? (isEtrApp && _etr != null ? 'Credit note signed by KRA. Stock returned.' : 'Refunded. Stock returned.'));
       _load();
     } on SaleError catch (e) {
       if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -172,7 +227,7 @@ class _SaleDetailState extends State<SaleDetail> {
           IconButton(
             tooltip: 'Share PDF',
             onPressed: () async {
-              final r = await Printer.pdf(Printer.saleLines(sale, _lines, _pays), s(sale['number']), share: true);
+              final r = await Printer.pdf(Printer.saleLines(sale, _lines, _pays, etr: _etr), s(sale['number']), share: true);
               if (context.mounted && r == null) toast(context, 'Could not make the PDF.');
             },
             icon: const Icon(Icons.share_outlined),
@@ -209,6 +264,10 @@ class _SaleDetailState extends State<SaleDetail> {
                   if (d(sale['change']) > 0) KV('Change', money(d(sale['change']))),
                 ]),
               ),
+              if (_etr != null) ...[
+                const SizedBox(height: 12),
+                _kraCard(_etr!),
+              ],
               const SizedBox(height: 16),
               OutlinedButton.icon(
                 onPressed: () async {
@@ -222,13 +281,55 @@ class _SaleDetailState extends State<SaleDetail> {
               if (s(sale['kind']) == 'sale' && s(sale['state']) != 'refunded') ...[
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
-                  onPressed: _refund,
+                  onPressed: _busy ? null : _refund,
                   style: OutlinedButton.styleFrom(foregroundColor: C.red),
                   icon: const Icon(Icons.undo_rounded),
                   label: const Text('Refund this sale'),
                 ),
               ],
             ]),
+    );
+  }
+
+  Widget _kraCard(Map<String, Object?> e) {
+    final st = s(e['status']);
+    final mine = isEtrApp && n(e['device_no']) == Db.deviceNo;
+    final (label, fg, bg) = switch (st) {
+      'signed' => ('Signed by KRA', C.green, C.greenLight),
+      'pending' => ('Waiting for KRA', C.amber, C.amberLight),
+      'cancelled' => ('Cancelled (not signed)', C.muted, C.soft),
+      _ => ('Not signed by KRA', C.red, C.redLight),
+    };
+    return Container(
+      decoration: box(),
+      child: Column(children: [
+        ListTile(
+          leading: const Icon(Icons.verified_outlined),
+          title: Text(s(e['kind']) == 'R' ? 'KRA credit note' : 'KRA invoice', style: const TextStyle(fontWeight: FontWeight.w700)),
+          trailing: Pill(label, fg: fg, bg: bg),
+        ),
+        KV('Invoice', s(e['trd_invc_no'])),
+        if (st == 'signed') KV('CU invoice no.', '${s(e['sdc_id'])}/${e['invc_no']}'),
+        if (s(e['cust_tin']).isNotEmpty) KV('Customer PIN', s(e['cust_tin'])),
+        if (st != 'signed' && s(e['error']).isNotEmpty)
+          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8), child: Text(s(e['error']), style: const TextStyle(color: C.red))),
+        if (mine && st == 'pending')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: FilledButton.icon(onPressed: _busy ? null : () => _kra('retry'), icon: const Icon(Icons.refresh), label: Text(_busy ? 'Sending...' : 'Retry (same invoice number)')),
+          ),
+        if (mine && st == 'failed')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Row(children: [
+              Expanded(child: FilledButton(onPressed: _busy ? null : () => _kra('again'), child: const Text('Sign again'))),
+              if (s(e['kind']) == 'S') ...[
+                const SizedBox(width: 10),
+                Expanded(child: OutlinedButton(onPressed: _busy ? null : () => _kra('cancel'), style: OutlinedButton.styleFrom(foregroundColor: C.red), child: const Text('Cancel sale'))),
+              ],
+            ]),
+          ),
+      ]),
     );
   }
 }

@@ -62,7 +62,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
           const _CodeCard(),
           const SizedBox(height: 18),
           Text(
-            isManagerApp
+            isOwnerApp
                 ? 'Send this code to BRV Integrated Systems. When your licence is activated this screen opens the app by itself.'
                 : 'Ask your manager to add this code in BRV Pos Manager > More > Devices. Then this screen opens the app by itself.',
             textAlign: TextAlign.center,
@@ -164,7 +164,7 @@ class _WaitingDataScreenState extends State<WaitingDataScreen> {
                     ? 'Getting your company\'s products, users and settings...'
                     : (Sync.i.error.isNotEmpty
                         ? Sync.i.error
-                        : (isManagerApp
+                        : (isOwnerApp
                             ? 'Nothing from your company yet. If this is a new phone for the manager, the old manager phone must sync first.'
                             : 'Nothing from your company yet. The manager must set up the business in BRV Pos Manager first (and be online).')),
                 textAlign: TextAlign.center,

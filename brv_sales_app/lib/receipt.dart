@@ -4,13 +4,17 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+import 'package:qr/qr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'config.dart';
+import 'etr/kra.dart';
 import 'fmt.dart';
 import 'settings.dart';
+import 'tax.dart';
 
 /// One line of a printout.
 class PLine {
-  final String kind; // center | left | row | dash | gap
+  final String kind; // center | left | row | dash | gap | qr | cols
   final String a;
   final String b;
   final double size;
@@ -33,6 +37,16 @@ class PLine {
         a = '',
         b = '',
         bold = false;
+  /// A QR code (e.g. the KRA receipt check link), centred.
+  const PLine.qr(this.a, {this.size = 210})
+      : kind = 'qr',
+        b = '',
+        bold = false;
+  /// Three columns: first left (40%), the other two right aligned (30% each). Cells separated by a tab.
+  PLine.cols(List<String> cells, {this.size = 17, this.bold = false})
+      : kind = 'cols',
+        a = cells.join('\t'),
+        b = '';
 }
 
 /// Receipts and reports drawn as one black-and-white image (58 mm = 384 dots, 80 mm = 576 dots),
@@ -85,6 +99,41 @@ class Printer {
             final p = _tp(l.a, l.size * k, bold: l.bold, max: inner);
             ops.add((p.height, (c, y) => p.paint(c, Offset(pad, y))));
           }
+        case 'qr':
+          {
+            if (l.a.isEmpty) return;
+            final qr = QrImage(QrCode.fromData(data: l.a, errorCorrectLevel: QrErrorCorrectLevel.L));
+            final m = qr.moduleCount;
+            final cell = ((l.size * k) / m).floorToDouble().clamp(2.0, 10.0);
+            final side = cell * m;
+            ops.add((side + 8 * k, (c, y) {
+              final paint = Paint()..color = const Color(0xFF000000);
+              final x0 = (w - side) / 2;
+              for (var yy = 0; yy < m; yy++) {
+                for (var xx = 0; xx < m; xx++) {
+                  if (qr.isDark(yy, xx)) c.drawRect(Rect.fromLTWH(x0 + xx * cell, y + 4 * k + yy * cell, cell, cell), paint);
+                }
+              }
+            }));
+          }
+        case 'cols':
+          {
+            final cells = l.a.split('\t');
+            const widths = [0.4, 0.3, 0.3];
+            final ps = <TextPainter>[];
+            for (var i = 0; i < cells.length && i < 3; i++) {
+              ps.add(_tp(cells[i], l.size * k, bold: l.bold, max: inner * widths[i] - 4 * k, align: i == 0 ? TextAlign.left : TextAlign.right));
+            }
+            final hh = ps.fold<double>(0, (a, p) => p.height > a ? p.height : a);
+            ops.add((hh, (c, y) {
+              var x = pad;
+              for (var i = 0; i < ps.length; i++) {
+                final cw = inner * widths[i];
+                ps[i].paint(c, Offset(i == 0 ? x : x + cw - ps[i].width, y));
+                x += cw;
+              }
+            }));
+          }
         default:
           {
             final r = _tp(l.b, l.size * k, bold: l.bold, max: inner);
@@ -127,7 +176,7 @@ class Printer {
       ],
       ...body,
       const PLine.gap(4),
-      const PLine.center('Powered by BRV Pos Sales', size: 15),
+      PLine.center('Powered by ${isEtrApp ? appTitle : 'BRV Pos Sales'}', size: 15),
       const PLine.gap(70),
     ];
     for (final l in all) {
@@ -146,8 +195,10 @@ class Printer {
     return _blackAndWhite(img);
   }
 
-  /// Sale or refund receipt.
-  static List<PLine> saleLines(Map<String, Object?> sale, List<Map<String, Object?>> lines, List<Map<String, Object?>> pays, {bool copy = false}) {
+  /// Sale or refund receipt. With [etr] (the KRA record of the sale) it is printed as a KRA tax invoice / credit note.
+  static List<PLine> saleLines(Map<String, Object?> sale, List<Map<String, Object?>> lines, List<Map<String, Object?>> pays,
+      {bool copy = false, Map<String, Object?>? etr}) {
+    if (etr != null) return _kraLines(sale, lines, pays, etr, copy: copy);
     final refund = s(sale['kind']) == 'refund';
     final out = <PLine>[
       if (copy) const PLine.center('COPY', size: 40, bold: true),
@@ -178,6 +229,107 @@ class Printer {
     }
     if (d(sale['change']) > 0) out.add(PLine.row('Change', money(d(sale['change']), symbol: false), bold: true));
     if (copy) out.add(const PLine.center('REPRINT - NOT THE ORIGINAL', size: 18, bold: true));
+    out.add(const PLine.dash());
+    out.add(PLine.center(Settings.i.receiptFooter, size: 19, bold: true));
+    return out;
+  }
+
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
+  /// KRA eTIMS layout: items with their tax group, tax table, VAT references, SCU information and the QR check link.
+  static List<PLine> _kraLines(Map<String, Object?> sale, List<Map<String, Object?>> lines, List<Map<String, Object?>> pays,
+      Map<String, Object?> etr, {bool copy = false}) {
+    final credit = s(etr['kind']) == 'R';
+    Map<String, dynamic> p = {};
+    try {
+      p = Map<String, dynamic>.from(jsonDecode(s(etr['payload'])) as Map);
+    } catch (_) {}
+    final when = DateTime.tryParse(s(sale['date'])) ?? DateTime.now();
+    final out = <PLine>[
+      if (copy) const PLine.center('COPY', size: 40, bold: true),
+      PLine.center(credit ? 'CREDIT NOTE' : 'TAX INVOICE', size: 23, bold: true),
+      const PLine.dash(),
+      PLine.row('Receipt', s(sale['number'])),
+      PLine.row(credit ? 'Credit note' : 'Invoice', s(etr['trd_invc_no'])),
+      if (credit && n(etr['org_invc_no']) > 0) PLine.row('For invoice no.', '${etr['org_invc_no']}'),
+      PLine.row('Date', dateText(sale['date'])),
+      if (s(sale['cashier']).isNotEmpty) PLine.row('Served by', s(sale['cashier'])),
+      if (s(etr['cust_nm']).isNotEmpty || s(sale['customer']).isNotEmpty) PLine.row('Customer', s(etr['cust_nm']).isNotEmpty ? s(etr['cust_nm']) : s(sale['customer'])),
+      if (s(etr['cust_tin']).isNotEmpty) PLine.row('Customer PIN', s(etr['cust_tin'])),
+      const PLine.dash(),
+    ];
+    var discount = 0.0;
+    final used = <String>{};
+    final refs = <String, Set<String>>{};
+    for (final l in lines) {
+      final q = d(l['qty']).abs(), pr = d(l['price']), dc = d(l['discount']).abs(), tot = d(l['total']).abs();
+      final g = taxCdOf(l);
+      used.add(g);
+      if (s(l['vat_ref']).isNotEmpty) (refs[g] ??= {}).add(s(l['vat_ref']));
+      discount += dc;
+      out.add(PLine.row(s(l['name']), '${money(tot + dc, symbol: false)} $g', size: 20, bold: true));
+      out.add(PLine.left('  ${qty(q)} x ${money(pr, symbol: false)}', size: 18));
+      if (dc > 0) out.add(PLine.row('  Discount', '-${money(dc, symbol: false)}', size: 18));
+    }
+    out.add(const PLine.dash());
+    if (discount > 0) out.add(PLine.row('Discount', '-${money(discount, symbol: false)}'));
+    out.add(PLine.cols(['Rate', 'Taxable', 'VAT'], bold: true));
+    for (final g in taxGroups) {
+      final taxbl = d(p['taxblAmt${g.code}']), tx = d(p['taxAmt${g.code}']);
+      // KRA: every rate above zero is printed; zero rates only when an item used them
+      if (g.rate > 0 || taxbl != 0 || used.contains(g.code)) {
+        final label = '${g.code}-${g.rate == 0 ? (g.code == 'A' ? 'Exempt' : '0%') : '${g.rate.toStringAsFixed(0)}%'}';
+        out.add(PLine.cols([label, money(taxbl, symbol: false), money(tx, symbol: false)]));
+      }
+    }
+    out.add(const PLine.gap(4));
+    out.add(PLine.row('Total VAT', money(d(p['totTaxAmt']), symbol: false)));
+    out.add(PLine.row('TOTAL', 'KSh ${money(d(sale['total']).abs(), symbol: false)}', size: 27, bold: true));
+    for (final py in pays) {
+      out.add(PLine.row(s(py['name']), money(d(py['amount']).abs(), symbol: false)));
+    }
+    if (d(sale['change']) > 0) out.add(PLine.row('Change', money(d(sale['change']), symbol: false), bold: true));
+    out.add(PLine.row('Items', '${lines.length}'));
+    // VAT references: the general reference of each group used, or the exact paragraph chosen on each item
+    final refLines = <PLine>[];
+    for (final g in taxGroups.where((g) => used.contains(g.code))) {
+      final own = refs[g.code] ?? const <String>{};
+      if (vatRefSpecify && own.isNotEmpty) {
+        for (final r in own) {
+          refLines.add(PLine.left('${g.code}: $r', size: 16));
+        }
+      } else {
+        refLines.add(PLine.left('${g.code}: ${generalRef(g.code)}', size: 16));
+      }
+    }
+    if (refLines.isNotEmpty) {
+      out.add(const PLine.dash());
+      out.add(const PLine.left('VAT reference', size: 17, bold: true));
+      out.addAll(refLines);
+    }
+    if (copy) out.add(const PLine.center('THIS IS NOT AN OFFICIAL RECEIPT', size: 22, bold: true));
+    out.add(const PLine.dash());
+    final status = s(etr['status']);
+    if (status == 'signed') {
+      final sdc = s(etr['sdc_id']);
+      out.addAll([
+        const PLine.center('SCU INFORMATION', size: 20, bold: true),
+        PLine.row('Date', '${_two(when.day)}/${_two(when.month)}/${when.year}', size: 18),
+        PLine.row('Time', '${_two(when.hour)}:${_two(when.minute)}:${_two(when.second)}', size: 18),
+        PLine.row('SCU ID', sdc, size: 18),
+        PLine.row('CU Invoice No.', '$sdc/${etr['invc_no']}', size: 18),
+        PLine.row('Receipt counter', '${s(etr['rcpt_no'])}/${s(etr['tot_rcpt_no'])} ${credit ? 'NC' : 'NS'}', size: 18),
+        if (s(etr['mrc_no']).isNotEmpty) PLine.row('MRC No.', s(etr['mrc_no']), size: 18),
+        const PLine.left('Internal data:', size: 18),
+        PLine.left(hyphenate(s(etr['intrl_data'])), size: 18, bold: true),
+        const PLine.left('Receipt signature:', size: 18),
+        PLine.left(hyphenate(s(etr['rcpt_sign'])), size: 18, bold: true),
+        PLine.qr(receiptUrl(test: false, tin: s(etr['tin']), bhfId: s(etr['bhf_id']), rcptSign: s(etr['rcpt_sign']))),
+      ]);
+    } else {
+      out.add(PLine.center(status == 'pending' ? 'KRA SIGNATURE PENDING' : 'NOT SIGNED BY KRA', size: 22, bold: true));
+      out.add(const PLine.center('Print again once KRA has signed it.', size: 16));
+    }
     out.add(const PLine.dash());
     out.add(PLine.center(Settings.i.receiptFooter, size: 19, bold: true));
     return out;

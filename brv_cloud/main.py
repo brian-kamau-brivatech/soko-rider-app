@@ -1,7 +1,8 @@
-"""BRV Cloud: licences and sync for BRV Pos Manager / BRV Pos Sales, managed with the BRV Licence app.
+"""BRV Cloud: licences and sync for BRV Pos Manager / BRV Pos Sales and BRV Handheld ETR, managed with the BRV Licence app.
 
-- A company (client) has a licence end date and a limit of user (sales) devices.
-- A device shows a code; the developer binds a Manager device to a company, the manager binds Sales devices.
+- A company (client) is for one product: 'pos' (BRV Pos Manager + Sales) or 'etr' (BRV Handheld ETR).
+- 'pos': the developer binds a Manager device, the manager binds Sales devices (limit = max_devices).
+- 'etr': the developer binds each handheld (role 'etr', limit = max_devices); the handhelds own the data.
 - Devices sell offline and sync rows (products, stock moves, sales, accounts ...) through /api/sync.
 """
 import datetime as dt
@@ -45,7 +46,16 @@ CREATE INDEX IF NOT EXISTS records_rev ON records(company_id, rev);
 CREATE TABLE IF NOT EXISTS commands(
   id SERIAL PRIMARY KEY, company_id INT NOT NULL, kind TEXT NOT NULL, payload JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(), done_at TIMESTAMPTZ);
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS product TEXT NOT NULL DEFAULT 'pos';
 """
+
+APPS = ('manager', 'sales', 'etr')
+OWNER_ROLES = ('manager', 'etr')  # devices that own the company data and carry out BRV commands
+
+
+def _user_role(co):
+    """The device role counted against max_devices."""
+    return 'etr' if co['product'] == 'etr' else 'sales'
 
 
 def db():
@@ -82,11 +92,11 @@ def _err(http_code, msg, **extra):
 
 def _licence(c, company_id):
     co = c.execute('SELECT * FROM companies WHERE id = %s', (company_id,)).fetchone()
-    used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = 'sales' AND active", (company_id,)).fetchone()['n']
+    used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = %s AND active", (company_id, _user_role(co))).fetchone()['n']
     return co, {
         'company_id': co['id'], 'company': co['name'], 'expires_at': _iso(co['expires_at']), 'days_left': _days_left(co['expires_at']),
         'active': co['active'], 'max_devices': co['max_devices'], 'devices_used': used, 'server_time': _iso(_now()),
-        'seeded': co['seeded'],
+        'seeded': co['seeded'], 'product': co['product'],
     }
 
 
@@ -97,7 +107,7 @@ def _licence(c, company_id):
 def hello(body: dict = Body(...)):
     code = str(body.get('code', '')).strip().upper()
     secret = str(body.get('secret', ''))
-    appname = 'manager' if body.get('app') == 'manager' else 'sales'
+    appname = body.get('app') if body.get('app') in APPS else 'sales'
     if len(code) < 8 or len(secret) < 16:
         return _err(400, 'Bad device code.')
     with db() as c:
@@ -140,17 +150,21 @@ def _bind(c, company_id, code, role, name=''):
             return 'This device is already registered.'
         return 'Code not found. Open the app on that device (with internet) so it shows its code, then try again.'
     if h['app'] != role:
-        return 'That code is from the %s app; it can only be added as a %s device.' % (h['app'].title(), h['app'])
+        names = {'manager': 'BRV Pos Manager', 'sales': 'BRV Pos Sales', 'etr': 'BRV Handheld ETR'}
+        return 'That code is from the %s app; add it as a %s device.' % (names.get(h['app'], h['app']), names.get(h['app'], h['app']))
     co = c.execute('SELECT * FROM companies WHERE id = %s FOR UPDATE', (company_id,)).fetchone()
-    if role == 'sales':
-        used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = 'sales' AND active", (company_id,)).fetchone()['n']
+    if (role == 'etr') != (co['product'] == 'etr'):
+        return 'This company is for %s; that code is from another app.' % ('BRV Handheld ETR' if co['product'] == 'etr' else 'BRV Pos (Manager and Sales)')
+    if role in ('sales', 'etr'):
+        used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = %s AND active", (company_id, role)).fetchone()['n']
         if used >= co['max_devices']:
             return 'Device limit reached (%d of %d). Ask BRV to allow more devices.' % (used, co['max_devices'])
     else:
         c.execute("UPDATE devices SET active = FALSE WHERE company_id = %s AND role = 'manager'", (company_id,))
     no = c.execute('SELECT COALESCE(MAX(device_no), 0) + 1 n FROM devices WHERE company_id = %s', (company_id,)).fetchone()['n']
     c.execute('INSERT INTO devices(company_id, code, secret_hash, role, device_no, name, model) VALUES (%s,%s,%s,%s,%s,%s,%s)',
-              (company_id, code, h['secret_hash'], role, no, name or h['name'] or ('Manager' if role == 'manager' else 'Device %d' % no), h['model']))
+              (company_id, code, h['secret_hash'], role, no,
+               name or h['name'] or ('Manager' if role == 'manager' else ('Handheld %d' if role == 'etr' else 'Device %d') % no), h['model']))
     c.execute('DELETE FROM hellos WHERE code = %s', (code,))
     return None
 
@@ -230,7 +244,7 @@ def sync(body: dict = Body(...), authorization: str = Header(None)):
         for ack in body.get('acks') or []:
             c.execute('UPDATE commands SET done_at = now() WHERE id = %s AND company_id = %s', (int(ack), d['company_id']))
         commands = []
-        if d['role'] == 'manager':
+        if d['role'] in OWNER_ROLES:
             commands = [{'id': r['id'], 'kind': r['kind'], **r['payload']} for r in c.execute(
                 'SELECT * FROM commands WHERE company_id = %s AND done_at IS NULL ORDER BY id', (d['company_id'],)).fetchall()]
         since = int(body.get('since') or 0)
@@ -252,19 +266,22 @@ def _dev(key):
 
 
 def _company_out(c, co):
-    used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = 'sales' AND active", (co['id'],)).fetchone()['n']
-    mgr = c.execute("SELECT name, model, last_seen FROM devices WHERE company_id = %s AND role = 'manager' AND active", (co['id'],)).fetchone()
+    used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = %s AND active", (co['id'], _user_role(co))).fetchone()['n']
+    mgr = c.execute("SELECT name, model, last_seen FROM devices WHERE company_id = %s AND role IN ('manager', 'etr') AND active "
+                    "ORDER BY last_seen DESC NULLS LAST LIMIT 1", (co['id'],)).fetchone()
     return {'id': co['id'], 'name': co['name'], 'phone': co['phone'], 'email': co['email'], 'notes': co['notes'],
             'expires_at': _iso(co['expires_at']), 'days_left': _days_left(co['expires_at']), 'active': co['active'],
             'max_devices': co['max_devices'], 'devices_used': used, 'has_manager': bool(mgr),
-            'manager_seen': _iso(mgr['last_seen']) if mgr else None, 'created_at': _iso(co['created_at'])}
+            'manager_seen': _iso(mgr['last_seen']) if mgr else None, 'created_at': _iso(co['created_at']), 'product': co['product']}
 
 
 @app.get('/api/dev/companies')
-def dev_companies(x_dev_key: str = Header(None)):
+def dev_companies(product: str = '', x_dev_key: str = Header(None)):
     _dev(x_dev_key)
     with db() as c:
-        return {'ok': True, 'companies': [_company_out(c, co) for co in c.execute('SELECT * FROM companies ORDER BY name').fetchall()]}
+        rows = c.execute('SELECT * FROM companies WHERE %s ORDER BY name' % ('product = %s' if product else 'TRUE'),
+                         (product,) if product else ()).fetchall()
+        return {'ok': True, 'companies': [_company_out(c, co) for co in rows]}
 
 
 @app.post('/api/dev/companies')
@@ -275,9 +292,12 @@ def dev_new_company(body: dict = Body(...), x_dev_key: str = Header(None)):
         return _err(400, 'Enter the company name.')
     days = max(0, int(body.get('days') or 0))
     with db() as c:
-        co = c.execute('INSERT INTO companies(name, phone, email, notes, expires_at, max_devices) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *',
+        product = 'etr' if body.get('product') == 'etr' else 'pos'
+        default_max = 1 if product == 'etr' else 2
+        co = c.execute('INSERT INTO companies(name, phone, email, notes, expires_at, max_devices, product) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                        (name, str(body.get('phone', '')), str(body.get('email', '')), str(body.get('notes', '')),
-                        _now() + dt.timedelta(days=days), max(0, int(body.get('max_devices') or 2)))).fetchone()
+                        _now() + dt.timedelta(days=days), max(0, int(body.get('max_devices') if body.get('max_devices') is not None else default_max)),
+                        product)).fetchone()
         return {'ok': True, 'company': _company_out(c, co)}
 
 
@@ -328,7 +348,7 @@ def dev_bind(cid: int, body: dict = Body(...), x_dev_key: str = Header(None)):
     with db() as c:
         if not c.execute('SELECT 1 FROM companies WHERE id = %s', (cid,)).fetchone():
             return _err(404, 'Company not found.')
-        role = 'manager' if body.get('role', 'manager') == 'manager' else 'sales'
+        role = body.get('role') if body.get('role') in APPS else 'manager'
         err = _bind(c, cid, str(body.get('code', '')), role, str(body.get('name', ''))[:60])
         if err:
             c.rollback()
@@ -346,9 +366,9 @@ def dev_device(did: int, body: dict = Body(...), x_dev_key: str = Header(None)):
             return _err(404, 'Device not found.')
         if 'active' in body:
             active = bool(body['active'])
-            if active and d['role'] == 'sales':
+            if active and d['role'] in ('sales', 'etr'):
                 co = c.execute('SELECT * FROM companies WHERE id = %s', (d['company_id'],)).fetchone()
-                used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = 'sales' AND active", (d['company_id'],)).fetchone()['n']
+                used = c.execute("SELECT COUNT(*) n FROM devices WHERE company_id = %s AND role = %s AND active", (d['company_id'], d['role'])).fetchone()['n']
                 if used >= co['max_devices']:
                     return _err(400, 'Device limit reached. Raise the limit first.')
             c.execute("UPDATE devices SET active = %s, token_hash = CASE WHEN %s THEN token_hash ELSE '' END WHERE id = %s", (active, active, did))
@@ -377,7 +397,7 @@ def dev_users(cid: int, x_dev_key: str = Header(None)):
 
 @app.post('/api/dev/companies/{cid}/pin_reset')
 def dev_pin_reset(cid: int, body: dict = Body(...), x_dev_key: str = Header(None)):
-    """New PIN for a user: the company's manager phone applies it at its next sync."""
+    """New PIN for a user: the company's manager phone (or ETR handheld) applies it at its next sync."""
     _dev(x_dev_key)
     pin = str(body.get('pin', '')).strip()
     if not pin.isdigit() or not 4 <= len(pin) <= 6:

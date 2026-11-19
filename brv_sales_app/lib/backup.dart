@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 import 'db.dart';
 import 'fmt.dart';
 import 'settings.dart';
@@ -79,11 +80,18 @@ class Backup {
     final db = await Db.get();
     final t = Map<String, dynamic>.from(b['tables'] as Map);
     await db.transaction((tx) async {
+      // this handheld's KRA device set-up and invoice counter stay as they are (never taken from a backup)
+      final etr = await tx.rawQuery("SELECT k, v FROM kv WHERE k LIKE 'etr\\_%' ESCAPE '\\'");
       for (final name in Db.tables) {
         await tx.delete(name);
         for (final row in (t[name] as List? ?? const [])) {
-          await tx.insert(name, Map<String, Object?>.from(row as Map));
+          final r = Map<String, Object?>.from(row as Map);
+          if (name == 'kv' && '${r['k']}'.startsWith('etr_')) continue;
+          await tx.insert(name, r);
         }
+      }
+      for (final r in etr) {
+        await tx.insert('kv', r, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
     await Settings.i.load();

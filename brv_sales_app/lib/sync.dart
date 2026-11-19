@@ -132,7 +132,7 @@ class Sync extends ChangeNotifier {
 
   /// Instructions from BRV (e.g. a PIN reset set in the BRV Licence app). Only the manager app carries them out.
   Future<bool> _commands(List<Map> cmds) async {
-    if (!isManagerApp) return false;
+    if (!isOwnerApp) return false;
     final done = <int>[];
     for (final c in cmds) {
       final id = n(c['id']);

@@ -1,8 +1,8 @@
-name: Build BRV Pos (Manager, Sales, Licence)
+name: Build BRV Pos (Manager, Sales, Handheld ETR, Licence)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'brv-handheld-etr' ]
     paths:
       - 'brv_sales_app/**'
       - 'brv_pos/android_overrides/**'
@@ -30,6 +30,11 @@ jobs:
             label: BRV Pos Sales
             tag: brv-pos-sales
             apk: BRV-Pos-Sales
+          - mode: etr
+            project: brv_handheld_etr
+            label: BRV Handheld ETR
+            tag: brv-handheld-etr
+            apk: BRV-Handheld-ETR
           - mode: dev
             project: brv_licence
             label: BRV Licence
@@ -116,11 +121,12 @@ jobs:
           path: brv_sales_app/${{ matrix.apk }}-*.apk
 
       - name: Release with downloadable APK
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ matrix.tag }}-v1.0.${{ github.run_number }}
           name: "${{ matrix.label }} v1.0.${{ github.run_number }}"
-          body: "${{ matrix.label }}. BRV Licence = developer (companies, licence days, device limits). BRV Pos Manager = the company's manager phone (full system, users and rights, devices). BRV Pos Sales = staff devices (sell offline, sync when online). Download -64bit.apk; use -32bit.apk only if the 64-bit one says it is not compatible. Guide: brv_sales_app/README.md."
+          body: "${{ matrix.label }}. BRV Licence = developer (companies, licence days, device limits). BRV Pos Manager = the company's manager phone (full system, users and rights, devices). BRV Pos Sales = staff devices (sell offline, sync when online). BRV Handheld ETR = one handheld that sells and manages, signing every sale with KRA eTIMS (VSCU). Download -64bit.apk; use -32bit.apk only if the 64-bit one says it is not compatible. Guide: brv_sales_app/README.md."
           files: |
             brv_sales_app/${{ matrix.apk }}-64bit.apk
             brv_sales_app/${{ matrix.apk }}-32bit.apk

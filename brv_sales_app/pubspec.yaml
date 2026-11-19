@@ -1,5 +1,5 @@
 name: brv_pos_sales
-description: "BRV Pos Sales: offline point of sale with stock, purchases, requisitions, accounting, users and roles."
+description: "BRV Pos (Manager, Sales, Handheld ETR, Licence): offline point of sale with stock, purchases, accounting, users, roles and KRA eTIMS."
 publish_to: "none"
 version: 1.0.0+1
 
@@ -14,6 +14,7 @@ dependencies:
   path: ^1.9.0
   crypto: ^3.0.3
   http: ^1.2.0
+  qr: ^3.0.2
 
 flutter:
   uses-material-design: true

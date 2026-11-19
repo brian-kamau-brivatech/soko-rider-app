@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 import '../bus.dart';
+import '../config.dart';
 import '../db.dart';
+import '../etr/etr_screen.dart' show pickItemClass;
+import '../etr/kra.dart' show Kra, Code;
 import '../fmt.dart';
 import '../ops.dart';
 import '../perms.dart';
 import '../sales.dart' show SaleError;
 import '../session.dart';
 import '../stock.dart';
+import '../tax.dart';
 import '../ui.dart';
+import 'import_screen.dart';
 import 'purchases_screen.dart';
+import 'vat_refs_screen.dart' show pickVatRef;
 import 'shell.dart';
 
 class StockHome extends StatefulWidget {
@@ -81,6 +87,7 @@ class _StockHomeState extends State<StockHome> {
         if (ses.can(P.purchase)) tile(Icons.storefront_outlined, 'Suppliers', 'Who you buy from, what you owe', const SuppliersScreen()),
         tile(Icons.swap_vert_rounded, 'Stock movements', 'Every item in and out', const MovesScreen()),
         if (ses.can(P.products)) tile(Icons.category_outlined, 'Categories', 'Groups on the Sell screen', const CategoriesScreen()),
+        if (ses.can(P.products)) tile(Icons.upload_file, 'Import items', 'From Excel (.xlsx) or CSV, with categories', const ImportScreen()),
         if (ses.can(P.settings) || ses.can(P.stockAdjust)) tile(Icons.warehouse_outlined, 'Locations', 'Main store, shop, bar, kitchen...', const LocationsScreen()),
       ]),
     );
@@ -283,7 +290,11 @@ class _ProductFormState extends State<ProductForm> {
   List<Map<String, Object?>> _locs = [];
   int? _cat;
   int _openLoc = 0;
-  double _tax = 16;
+  String _taxCd = 'B';
+  String _vatRef = '';
+  // KRA (BRV Handheld ETR)
+  String _cls = '', _itemType = '2', _origin = 'KE', _pkg = 'NT', _qtyUnit = 'U', _itemCd = '', _kraErr = '';
+  bool _kraReg = false;
   bool _track = true;
   bool _active = true;
 
@@ -313,7 +324,16 @@ class _ProductFormState extends State<ProductForm> {
         _unit.text = s(p['unit']);
         _reorder.text = qty(d(p['reorder']));
         _cat = p['category_id'] == null ? _cat : n(p['category_id']);
-        _tax = d(p['tax_rate']);
+        _taxCd = taxCdOf(p);
+        _vatRef = s(p['vat_ref']);
+        _cls = s(p['cls_cd']);
+        _itemType = s(p['item_type']).isEmpty ? '2' : s(p['item_type']);
+        _origin = s(p['origin']).isEmpty ? 'KE' : s(p['origin']);
+        _pkg = s(p['pkg_unit']).isEmpty ? 'NT' : s(p['pkg_unit']);
+        _qtyUnit = s(p['qty_unit']).isEmpty ? 'U' : s(p['qty_unit']);
+        _itemCd = s(p['item_cd']);
+        _kraReg = n(p['kra_reg']) == 1;
+        _kraErr = s(p['kra_err']);
         _track = n(p['track']) == 1;
         _active = n(p['active']) == 1;
       }
@@ -329,8 +349,11 @@ class _ProductFormState extends State<ProductForm> {
     final cost = numIn(_cost.text) ?? 0;
     final vals = {
       'name': _name.text.trim(), 'sku': _sku.text.trim(), 'barcode': _barcode.text.trim(), 'category_id': _cat,
-      'price': price, 'cost': cost, 'tax_rate': _tax, 'unit': _unit.text.trim().isEmpty ? 'pcs' : _unit.text.trim(),
+      'price': price, 'cost': cost, 'tax_cd': _taxCd, 'tax_rate': taxGroup(_taxCd).rate,
+      'unit': _unit.text.trim().isEmpty ? 'pcs' : _unit.text.trim(), 'vat_ref': _vatRef,
       'track': _track ? 1 : 0, 'reorder': numIn(_reorder.text) ?? 0, 'active': _active ? 1 : 0,
+      'cls_cd': _cls, 'item_type': _itemType, 'origin': _origin, 'pkg_unit': _pkg, 'qty_unit': _qtyUnit,
+      'kra_reg': 0, // any change is sent to KRA again (items/saveItems updates it)
     };
     final db = await Db.get();
     try {
@@ -372,16 +395,26 @@ class _ProductFormState extends State<ProductForm> {
             onChanged: (v) => setState(() => _cat = v),
           ),
           const SizedBox(height: 10),
-          DropdownButtonFormField<double>(
-            value: _tax,
-            decoration: const InputDecoration(labelText: 'VAT'),
-            items: const [
-              DropdownMenuItem(value: 16.0, child: Text('16% (standard)')),
-              DropdownMenuItem(value: 8.0, child: Text('8% (fuel)')),
-              DropdownMenuItem(value: 0.0, child: Text('0% / exempt')),
-            ],
-            onChanged: (v) => setState(() => _tax = v ?? 16),
+          DropdownButtonFormField<String>(
+            value: _taxCd,
+            decoration: const InputDecoration(labelText: 'Tax group (VAT)'),
+            items: [for (final g in taxGroups) DropdownMenuItem(value: g.code, child: Text(g.label))],
+            onChanged: (v) => setState(() {
+              if (v != _taxCd) _vatRef = '';
+              _taxCd = v ?? 'B';
+            }),
           ),
+          if (vatRefSpecify)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('VAT reference'),
+              subtitle: Text(_vatRef.isEmpty ? 'General: ${generalRef(_taxCd)}' : _vatRef),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                final r = await pickVatRef(context, _taxCd, current: _vatRef);
+                if (r != null) setState(() => _vatRef = r);
+              },
+            ),
           const SizedBox(height: 10),
           Row(children: [
             Expanded(child: TextField(controller: _sku, decoration: const InputDecoration(labelText: 'Code (SKU)'))),
@@ -418,10 +451,57 @@ class _ProductFormState extends State<ProductForm> {
           ],
           if (widget.id != null)
             SwitchListTile(contentPadding: EdgeInsets.zero, value: _active, onChanged: (v) => setState(() => _active = v), title: const Text('Active (shown on the Sell screen)')),
+          if (isEtrApp) ..._kraFields(),
           const SizedBox(height: 16),
           FilledButton(onPressed: _save, child: const Text('Save')),
         ]),
       );
+
+  List<Widget> _kraFields() {
+    Widget pick(String label, String value, List<Code> list, void Function(String) set) => DropdownButtonFormField<String>(
+          value: list.any((c) => c.code == value) ? value : null,
+          isExpanded: true,
+          decoration: InputDecoration(labelText: label),
+          items: [for (final c in list) DropdownMenuItem(value: c.code, child: Text('${c.code} - ${c.name}', overflow: TextOverflow.ellipsis))],
+          onChanged: (v) => setState(() => set(v ?? value)),
+        );
+    return [
+      const Label('KRA eTIMS'),
+      if (widget.id != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(children: [
+            Pill(_kraReg ? 'Registered with KRA' : 'Not registered yet', fg: _kraReg ? C.green : C.amber, bg: _kraReg ? C.greenLight : C.amberLight),
+            const SizedBox(width: 8),
+            if (_itemCd.isNotEmpty) Expanded(child: Text(_itemCd, style: muted, overflow: TextOverflow.ellipsis)),
+          ]),
+        ),
+      if (_kraErr.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_kraErr, style: const TextStyle(color: C.red))),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('KRA item class'),
+        subtitle: Text(_cls.isEmpty ? 'Default of the device' : _cls),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () async {
+          final c = await pickItemClass(context, current: _cls);
+          if (c != null) setState(() => _cls = c);
+        },
+      ),
+      Row(children: [
+        Expanded(child: pick('Item type', _itemType, Kra.itemTypes, (v) => _itemType = v)),
+        const SizedBox(width: 10),
+        Expanded(child: pick('Origin', _origin, Kra.origins, (v) => _origin = v)),
+      ]),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(child: pick('Packaging unit', _pkg, Kra.pkgUnits, (v) => _pkg = v)),
+        const SizedBox(width: 10),
+        Expanded(child: pick('Quantity unit', _qtyUnit, Kra.qtyUnits, (v) => _qtyUnit = v)),
+      ]),
+      const SizedBox(height: 4),
+      const Text('Saved items are registered with KRA at their first sale (or More > KRA eTIMS device).', style: muted),
+    ];
+  }
 }
 
 // -----------------------------------------------------------------------------

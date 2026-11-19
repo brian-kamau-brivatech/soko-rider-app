@@ -11,8 +11,9 @@ class Db {
   static Future<Database> get() async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, fileName), version: 2, onCreate: (db, v) async {
+    _db = await openDatabase(p.join(dir, fileName), version: 3, onCreate: (db, v) async {
       await _schema(db);
+      await _etrSchema(db);
       await _syncSchema(db);
       await _indexes(db);
     }, onUpgrade: (db, oldV, newV) async {
@@ -24,6 +25,14 @@ class Db {
           final perms = s(r['perms']).split(',').where((x) => x.isNotEmpty).toSet()..add(P.managerApp);
           await db.update('roles', {'perms': perms.join(',')}, where: 'id = ?', whereArgs: [r['id']]);
         }
+      }
+      if (oldV < 3) {
+        // tax groups (A/B/C/E), VAT references and KRA eTIMS (BRV Handheld ETR)
+        await _etrSchema(db);
+        for (final t in const ['etr_sales', 'vat_refs']) {
+          await _tableTriggers(db, t);
+        }
+        await _kvTriggers(db);
       }
     }, onConfigure: (db) async {
       await db.execute('PRAGMA foreign_keys = OFF');
@@ -41,8 +50,32 @@ class Db {
     'kv', 'roles', 'users', 'categories', 'products', 'locations', 'stock', 'stock_moves', 'customers',
     'suppliers', 'accounts', 'pay_methods', 'shifts', 'sales', 'sale_lines', 'sale_payments', 'purchases',
     'purchase_lines', 'supplier_payments', 'customer_payments', 'requisitions', 'requisition_lines', 'expenses',
-    'journal', 'journal_lines', 'audit',
+    'journal', 'journal_lines', 'audit', 'etr_sales', 'vat_refs',
   ];
+
+  /// Tax groups and KRA eTIMS: item fields, signed invoices (synced), VAT references (synced),
+  /// KRA item classes and the VSCU call log (this device only).
+  static Future<void> _etrSchema(Database db) async {
+    for (final c in const [
+      "tax_cd TEXT DEFAULT ''", "cls_cd TEXT DEFAULT ''", "item_cd TEXT DEFAULT ''", "item_type TEXT DEFAULT '2'",
+      "origin TEXT DEFAULT 'KE'", "pkg_unit TEXT DEFAULT 'NT'", "qty_unit TEXT DEFAULT 'U'", "vat_ref TEXT DEFAULT ''",
+      'kra_reg INTEGER DEFAULT 0', "kra_err TEXT DEFAULT ''",
+    ]) {
+      await db.execute('ALTER TABLE products ADD COLUMN $c');
+    }
+    await db.execute("ALTER TABLE sale_lines ADD COLUMN tax_cd TEXT DEFAULT ''");
+    await db.execute('''CREATE TABLE IF NOT EXISTS etr_sales(id INTEGER PRIMARY KEY, invc_no INTEGER, trd_invc_no TEXT,
+        kind TEXT DEFAULT 'S', org_invc_no INTEGER DEFAULT 0, rfd_rsn TEXT DEFAULT '', status TEXT DEFAULT 'pending',
+        error TEXT DEFAULT '', pmt_ty_cd TEXT DEFAULT '', cust_tin TEXT DEFAULT '', cust_nm TEXT DEFAULT '',
+        tin TEXT DEFAULT '', bhf_id TEXT DEFAULT '', payload TEXT, response TEXT DEFAULT '', rcpt_no INTEGER,
+        tot_rcpt_no INTEGER, intrl_data TEXT DEFAULT '', rcpt_sign TEXT DEFAULT '', sdc_id TEXT DEFAULT '',
+        mrc_no TEXT DEFAULT '', sdc_date TEXT DEFAULT '', created_at TEXT, device_no INTEGER DEFAULT 0)''');
+    await db.execute('CREATE INDEX IF NOT EXISTS etr_status ON etr_sales(status, device_no)');
+    await db.execute("CREATE TABLE IF NOT EXISTS vat_refs(id INTEGER PRIMARY KEY, tax_cd TEXT, code TEXT, text TEXT DEFAULT '')");
+    await db.execute("CREATE TABLE IF NOT EXISTS item_classes(cd TEXT PRIMARY KEY, nm TEXT, lvl INTEGER DEFAULT 0, tax TEXT DEFAULT '')");
+    await db.execute('''CREATE TABLE IF NOT EXISTS etr_calls(id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, path TEXT, ok INTEGER,
+        code TEXT, msg TEXT, ms INTEGER, request TEXT, response TEXT)''');
+  }
 
   static Future<void> _schema(Database db) async {
     // ids are made by the app (device number x 10^10 + counter): unique across all devices of a company
@@ -164,12 +197,14 @@ class Db {
     'roles', 'users', 'categories', 'products', 'locations', 'stock_moves', 'customers', 'suppliers', 'accounts',
     'pay_methods', 'shifts', 'sales', 'sale_lines', 'sale_payments', 'purchases', 'purchase_lines', 'supplier_payments',
     'customer_payments', 'requisitions', 'requisition_lines', 'expenses', 'journal', 'journal_lines', 'audit',
+    'etr_sales', 'vat_refs',
   ];
 
   /// Business settings shared by all devices (printer, paper, selling location stay per device).
   static const sharedKeys = [
     'business_name', 'phone', 'address', 'email', 'tax_pin', 'receipt_header', 'receipt_footer', 'vat_registered',
     'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash', 'receipt_logo',
+    'vat_ref_mode', 'vat_gen_A', 'vat_gen_B', 'vat_gen_C', 'vat_gen_E',
   ];
 
   /// Faster dashboards, reports and stock screens.
@@ -203,13 +238,17 @@ class Db {
     await db.execute('CREATE TABLE outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT, rid TEXT, deleted INTEGER DEFAULT 0)');
     await db.execute('CREATE TABLE sync_state(muted INTEGER NOT NULL DEFAULT 0)');
     await db.execute('INSERT INTO sync_state(muted) VALUES (0)');
-    const on = '(SELECT muted FROM sync_state) = 0';
     for (final t in synced) {
-      await db.execute("CREATE TRIGGER ${t}_ai AFTER INSERT ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
-      await db.execute("CREATE TRIGGER ${t}_au AFTER UPDATE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
-      await db.execute("CREATE TRIGGER ${t}_ad AFTER DELETE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid, deleted) VALUES ('$t', OLD.id, 1); END");
+      await _tableTriggers(db, t);
     }
     await _kvTriggers(db);
+  }
+
+  static Future<void> _tableTriggers(Database db, String t) async {
+    const on = '(SELECT muted FROM sync_state) = 0';
+    await db.execute("CREATE TRIGGER IF NOT EXISTS ${t}_ai AFTER INSERT ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
+    await db.execute("CREATE TRIGGER IF NOT EXISTS ${t}_au AFTER UPDATE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid) VALUES ('$t', NEW.id); END");
+    await db.execute("CREATE TRIGGER IF NOT EXISTS ${t}_ad AFTER DELETE ON $t WHEN $on BEGIN INSERT INTO outbox(tbl, rid, deleted) VALUES ('$t', OLD.id, 1); END");
   }
 
   /// This device's number in its company (from the licence), used for ids and receipt numbers.

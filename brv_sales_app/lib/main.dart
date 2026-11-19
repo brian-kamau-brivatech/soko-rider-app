@@ -62,9 +62,9 @@ class _BrvPosState extends State<BrvPos> with WidgetsBindingObserver {
     if (!lic.usable) return;
     if (!_syncing) {
       _syncing = true;
-      if (isManagerApp && !lic.seeded) await Db.seedCompany();
+      if (isOwnerApp && !lic.seeded) await Db.seedCompany();
       Sync.i.start();
-      if (isManagerApp) Backup.auto();
+      if (isOwnerApp) Backup.auto();
     }
     await _checkUsers();
   }
@@ -97,7 +97,7 @@ class _BrvPosState extends State<BrvPos> with WidgetsBindingObserver {
     if (_hasUsers == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (_hasUsers == false) {
       // a brand-new company: the manager sets up the business; everyone else waits for that data
-      if (isManagerApp && _seededHere) return SetupScreen(onDone: _checkUsers);
+      if (isOwnerApp && _seededHere) return SetupScreen(onDone: _checkUsers);
       return const WaitingDataScreen();
     }
     if (!Session.i.signedIn) return const LockScreen();

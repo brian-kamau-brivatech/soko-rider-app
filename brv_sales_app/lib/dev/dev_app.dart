@@ -5,7 +5,9 @@ import '../fmt.dart';
 import '../net.dart';
 import '../ui.dart';
 
-/// BRV Licence: the developer's app. Companies, licence days, number of user devices, device codes.
+/// BRV Licence: the developer's app, one app for all products, in two sections:
+/// BRV Pos (Manager + Sales devices) and BRV Handheld ETR (KRA eTIMS handhelds).
+/// Companies, licence days, number of devices, device codes.
 class DevApp extends StatelessWidget {
   const DevApp({super.key});
   @override
@@ -98,6 +100,9 @@ class _LoginState extends State<_Login> {
       );
 }
 
+const _appNames = {'manager': 'BRV Pos Manager', 'sales': 'BRV Pos Sales', 'etr': 'BRV Handheld ETR'};
+String _productOf(Map<String, dynamic> c) => '${c['product'] ?? 'pos'}' == 'etr' ? 'etr' : 'pos';
+
 Color _daysColor(int d, bool active) => !active ? C.muted : (d <= 0 ? C.red : (d <= 7 ? C.amber : C.green));
 
 class CompaniesScreen extends StatefulWidget {
@@ -108,20 +113,32 @@ class CompaniesScreen extends StatefulWidget {
 }
 
 class _CompaniesScreenState extends State<CompaniesScreen> {
-  List<Map<String, dynamic>> _rows = [];
+  List<Map<String, dynamic>> _all = [];
   String _error = '';
   String _q = '';
+  String _product = 'pos'; // section: pos | etr
+
+  List<Map<String, dynamic>> get _rows => _all.where((c) => _productOf(c) == _product).toList();
+  bool get _etr => _product == 'etr';
 
   @override
   void initState() {
     super.initState();
+    SharedPreferences.getInstance().then((p) {
+      if (mounted) setState(() => _product = p.getString('dev_section') ?? 'pos');
+    });
     _load();
+  }
+
+  Future<void> _section(String v) async {
+    setState(() => _product = v);
+    (await SharedPreferences.getInstance()).setString('dev_section', v);
   }
 
   Future<void> _load() async {
     try {
       final r = await Dev.call('GET', '/companies');
-      _rows = ((r['companies'] as List?) ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      _all = ((r['companies'] as List?) ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       _error = '';
     } on NetError catch (e) {
       _error = e.message;
@@ -133,11 +150,11 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
     final name = TextEditingController();
     final phone = TextEditingController();
     final days = TextEditingController(text: '365');
-    final devices = TextEditingController(text: '2');
+    final devices = TextEditingController(text: _etr ? '1' : '2');
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New company'),
+        title: Text(_etr ? 'New company: BRV Handheld ETR' : 'New company: BRV Pos'),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(controller: name, decoration: const InputDecoration(labelText: 'Company name')),
@@ -146,7 +163,8 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
             const SizedBox(height: 8),
             TextField(controller: days, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Licence days')),
             const SizedBox(height: 8),
-            TextField(controller: devices, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'User devices allowed (besides the manager)')),
+            TextField(controller: devices, keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: _etr ? 'Handhelds allowed' : 'User devices allowed (besides the manager)')),
           ]),
         ),
         actions: [
@@ -159,7 +177,7 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
     try {
       final r = await Dev.call('POST', '/companies', body: {
         'name': name.text.trim(), 'phone': phone.text.trim(), 'days': int.tryParse(days.text.trim()) ?? 0,
-        'max_devices': int.tryParse(devices.text.trim()) ?? 2,
+        'max_devices': int.tryParse(devices.text.trim()) ?? (_etr ? 1 : 2), 'product': _product,
       });
       await _load();
       if (!mounted) return;
@@ -174,9 +192,10 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
   @override
   Widget build(BuildContext context) {
     final q = _q.trim().toLowerCase();
-    final shown = _rows.where((c) => q.isEmpty || '${c['name']}'.toLowerCase().contains(q) || '${c['phone']}'.contains(q)).toList();
-    final active = _rows.where((c) => c['active'] == true && (c['days_left'] as num) > 0).length;
-    final soon = _rows.where((c) => c['active'] == true && (c['days_left'] as num) > 0 && (c['days_left'] as num) <= 14).length;
+    final rows = _rows;
+    final shown = rows.where((c) => q.isEmpty || '${c['name']}'.toLowerCase().contains(q) || '${c['phone']}'.contains(q)).toList();
+    final active = rows.where((c) => c['active'] == true && (c['days_left'] as num) > 0).length;
+    final soon = rows.where((c) => c['active'] == true && (c['days_left'] as num) > 0 && (c['days_left'] as num) <= 14).length;
     return Scaffold(
       appBar: AppBar(title: const Text('BRV Licence'), actions: [
         IconButton(
@@ -195,10 +214,19 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
           icon: const Icon(Icons.logout),
         ),
       ]),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _new, icon: const Icon(Icons.add_business), label: const Text('Company')),
+      floatingActionButton: FloatingActionButton.extended(onPressed: _new, icon: const Icon(Icons.add_business), label: Text(_etr ? 'ETR company' : 'Company')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 90), children: [
+          SegmentedButton<String>(
+            segments: [
+              ButtonSegment(value: 'pos', label: Text('BRV Pos (${_all.where((c) => _productOf(c) == 'pos').length})'), icon: const Icon(Icons.point_of_sale)),
+              ButtonSegment(value: 'etr', label: Text('Handheld ETR (${_all.where((c) => _productOf(c) == 'etr').length})'), icon: const Icon(Icons.receipt_long)),
+            ],
+            selected: {_product},
+            onSelectionChanged: (v) => _section(v.first),
+          ),
+          const SizedBox(height: 12),
           Row(children: [
             Expanded(child: StatTile(dark: true, value: '${_rows.length}', label: 'Companies', progress: _rows.isEmpty ? 0 : active / _rows.length, note: '$active active')),
             const SizedBox(width: 12),
@@ -215,7 +243,9 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
               child: ListTile(
                 leading: Avatar('${c['name']}', size: 44, bg: C.ink, fg: Colors.white),
                 title: Text('${c['name']}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                subtitle: Text('${c['devices_used']} of ${c['max_devices']} user devices · ${c['has_manager'] == true ? 'manager active' : 'no manager yet'}'),
+                subtitle: Text(_etr
+                    ? '${c['devices_used']} of ${c['max_devices']} handhelds'
+                    : '${c['devices_used']} of ${c['max_devices']} user devices · ${c['has_manager'] == true ? 'manager active' : 'no manager yet'}'),
                 trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Text(c['active'] == true ? '${c['days_left']} days' : 'Suspended',
                       style: h(14, color: _daysColor((c['days_left'] as num).toInt(), c['active'] == true))),
@@ -284,7 +314,7 @@ class _CompanyScreenState extends State<CompanyScreen> {
         context: context,
         builder: (ctx) => SafeArea(
           child: ListView(shrinkWrap: true, children: [
-            ListTile(title: Text(role == 'manager' ? 'Manager phones waiting' : 'User devices waiting', style: h(17))),
+            ListTile(title: Text('${_appNames[role]} devices waiting', style: h(17))),
             for (final x in waiting)
               ListTile(
                 leading: const Icon(Icons.smartphone),
@@ -299,12 +329,12 @@ class _CompanyScreenState extends State<CompanyScreen> {
       if (code == null || !mounted) return;
     }
     if (code == null || code.isEmpty) {
-      code = await ask(context, role == 'manager' ? 'Manager device code' : 'User device code', label: 'Code shown on the device');
+      code = await ask(context, '${_appNames[role]} code', label: 'Code shown on the device');
       if (code == null || code.trim().isEmpty) return;
     }
     try {
       _use(await Dev.call('POST', '/companies/${widget.id}/bind', body: {'code': code.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase(), 'role': role}));
-      if (mounted) toast(context, role == 'manager' ? 'Manager activated. The phone opens by itself.' : 'Device added.');
+      if (mounted) toast(context, role == 'sales' ? 'Device added.' : 'Activated. The device opens by itself.');
     } on NetError catch (e) {
       if (mounted) toast(context, e.message);
     }
@@ -397,6 +427,7 @@ class _CompanyScreenState extends State<CompanyScreen> {
     final days = (c['days_left'] as num).toInt();
     final active = c['active'] == true;
     final maxD = (c['max_devices'] as num).toInt();
+    final etr = _productOf(c) == 'etr';
     return Scaffold(
       appBar: AppBar(title: Text('${c['name']}'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
       body: RefreshIndicator(
@@ -410,7 +441,7 @@ class _CompanyScreenState extends State<CompanyScreen> {
               Text('Until ${dateText(DateTime.tryParse('${c['expires_at']}')?.toLocal().toIso8601String(), time: false)}',
                   style: const TextStyle(color: Color(0xFFCBD5E1))),
               const SizedBox(height: 10),
-              Text('${c['devices_used']} of $maxD user devices · ${c['has_manager'] == true ? 'manager active' : 'no manager yet'}',
+              Text(etr ? 'BRV Handheld ETR · ${c['devices_used']} of $maxD handhelds' : 'BRV Pos · ${c['devices_used']} of $maxD user devices · ${c['has_manager'] == true ? 'manager active' : 'no manager yet'}',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
               if ('${c['phone']}'.isNotEmpty) Text('${c['phone']}', style: const TextStyle(color: Color(0xFFCBD5E1))),
             ]),
@@ -419,15 +450,19 @@ class _CompanyScreenState extends State<CompanyScreen> {
           Row(children: [
             Expanded(child: FilledButton.icon(onPressed: _addDays, icon: const Icon(Icons.add), label: const Text('Add days'))),
             const SizedBox(width: 10),
-            Expanded(child: OutlinedButton.icon(onPressed: () => _bind('manager'), icon: const Icon(Icons.admin_panel_settings_outlined), label: const Text('Manager code'))),
+            Expanded(
+                child: OutlinedButton.icon(
+                    onPressed: () => _bind(etr ? 'etr' : 'manager'),
+                    icon: Icon(etr ? Icons.receipt_long : Icons.admin_panel_settings_outlined),
+                    label: Text(etr ? 'Handheld code' : 'Manager code'))),
           ]),
           const SizedBox(height: 14),
           Container(
             decoration: box(),
             child: Column(children: [
               ListTile(
-                title: const Text('User devices allowed'),
-                subtitle: const Text('BRV Pos Sales devices the manager can add'),
+                title: Text(etr ? 'Handhelds allowed' : 'User devices allowed'),
+                subtitle: Text(etr ? 'BRV Handheld ETR devices of this company' : 'BRV Pos Sales devices the manager can add'),
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   IconButton(onPressed: maxD <= 0 ? null : () => _patch({'max_devices': maxD - 1}, 'Limit: ${maxD - 1}'), icon: const Icon(Icons.remove_circle_outline)),
                   Text('$maxD', style: h(18)),
@@ -465,7 +500,7 @@ class _CompanyScreenState extends State<CompanyScreen> {
               ListTile(
                 leading: const Icon(Icons.lock_reset),
                 title: const Text("Reset a user's PIN"),
-                subtitle: const Text('For a manager who forgot the PIN'),
+                subtitle: Text(etr ? 'For an owner who forgot the PIN (the handheld applies it)' : 'For a manager who forgot the PIN'),
                 onTap: _pinReset,
               ),
             ]),
@@ -473,15 +508,16 @@ class _CompanyScreenState extends State<CompanyScreen> {
           const SizedBox(height: 16),
           Row(children: [
             Expanded(child: Text('Devices', style: h(17))),
-            TextButton.icon(onPressed: () => _bind('sales'), icon: const Icon(Icons.add), label: const Text('User device')),
+            if (!etr) TextButton.icon(onPressed: () => _bind('sales'), icon: const Icon(Icons.add), label: const Text('User device')),
           ]),
-          if (_devices.isEmpty) const Empty(Icons.smartphone, 'No devices yet. Activate the manager phone with its code.'),
+          if (_devices.isEmpty) Empty(Icons.smartphone, etr ? 'No handheld yet. Tap Handheld code.' : 'No devices yet. Activate the manager phone with its code.'),
           for (final d in _devices)
             Container(
               margin: const EdgeInsets.only(bottom: 8),
               decoration: box(),
               child: ListTile(
-                leading: Icon(d['role'] == 'manager' ? Icons.admin_panel_settings : Icons.point_of_sale, color: d['active'] == true ? C.ink : C.muted),
+                leading: Icon(d['role'] == 'manager' ? Icons.admin_panel_settings : (d['role'] == 'etr' ? Icons.receipt_long : Icons.point_of_sale),
+                    color: d['active'] == true ? C.ink : C.muted),
                 title: Text('${d['name']} · no. ${d['device_no']}', style: TextStyle(fontWeight: FontWeight.w700, color: d['active'] == true ? C.text : C.muted)),
                 subtitle: Text('${_shown('${d['code']}')} · ${d['model']}\nLast sync: ${d['last_sync'] == null ? 'never' : dateText(DateTime.tryParse('${d['last_sync']}')?.toLocal().toIso8601String())}'),
                 isThreeLine: true,
@@ -533,16 +569,16 @@ class _WaitingScreenState extends State<WaitingScreen> {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Devices waiting'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
         body: _rows.isEmpty
-            ? const Empty(Icons.qr_code_2, 'No device is waiting. Open the Manager or Sales app on the device (with internet) to show its code.')
+            ? const Empty(Icons.qr_code_2, 'No device is waiting. Open the Manager, Sales or Handheld ETR app on the device (with internet) to show its code.')
             : ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 24), children: [
                 for (final x in _rows)
                   Container(
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: box(),
                     child: ListTile(
-                      leading: Icon(x['app'] == 'manager' ? Icons.admin_panel_settings : Icons.point_of_sale),
+                      leading: Icon(x['app'] == 'manager' ? Icons.admin_panel_settings : (x['app'] == 'etr' ? Icons.receipt_long : Icons.point_of_sale)),
                       title: Text('${x['code']}', style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1)),
-                      subtitle: Text('${x['app'] == 'manager' ? 'Manager app' : 'Sales app'} · ${x['model']} · '
+                      subtitle: Text('${_appNames['${x['app']}'] ?? x['app']} · ${x['model']} · '
                           '${dateText(DateTime.tryParse('${x['last_seen']}')?.toLocal().toIso8601String())}'),
                     ),
                   ),
