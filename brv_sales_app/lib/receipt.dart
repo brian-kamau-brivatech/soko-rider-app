@@ -278,7 +278,7 @@ class Printer {
       final taxbl = d(p['taxblAmt${g.code}']), tx = d(p['taxAmt${g.code}']);
       // KRA: every rate above zero is printed; zero rates only when an item used them
       if (g.rate > 0 || taxbl != 0 || used.contains(g.code)) {
-        final label = '${g.code}-${g.rate == 0 ? (g.code == 'A' ? 'Exempt' : '0%') : '${g.rate.toStringAsFixed(0)}%'}';
+        final label = '${g.code}-${g.rate == 0 ? (g.code == 'A' ? 'Exempt' : (g.code == 'D' ? 'Non-VAT' : '0%')) : '${g.rate.toStringAsFixed(0)}%'}';
         out.add(PLine.cols([label, money(taxbl, symbol: false), money(tx, symbol: false)]));
       }
     }

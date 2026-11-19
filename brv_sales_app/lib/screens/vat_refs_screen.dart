@@ -103,7 +103,7 @@ class _VatRefsScreenState extends State<VatRefsScreen> {
           final ref = at(r, ri);
           var g = at(r, gi).toUpperCase();
           if (ref.isEmpty) continue;
-          if (!taxGroups.any((x) => x.code == g)) g = g.contains('ZERO') ? 'C' : (g.contains('8') ? 'E' : (g.contains('16') ? 'B' : 'A'));
+          if (!taxGroups.any((x) => x.code == g)) g = g.contains('ZERO') ? 'C' : (g.contains('NON') ? 'D' : (g.contains('8') ? 'E' : (g.contains('16') ? 'B' : 'A')));
           final old = await tx.rawQuery('SELECT id FROM vat_refs WHERE tax_cd = ? AND code = ?', [g, ref]);
           if (old.isEmpty) {
             await Db.ins(tx, 'vat_refs', {'tax_cd': g, 'code': ref, 'text': at(r, di)});

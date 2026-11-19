@@ -9,6 +9,7 @@ import '../perms.dart';
 import '../receipt.dart';
 import '../sales.dart';
 import '../session.dart';
+import '../settings.dart';
 import '../ui.dart';
 import 'sell_screen.dart' show printSale;
 
@@ -162,6 +163,7 @@ class _SaleDetailState extends State<SaleDetail> {
         msg = 'Cancelled.';
       }
       changed();
+      if (msg == null && Settings.i.printAfterSale) await printSale(widget.saleId); // now signed: print the KRA receipt
       if (mounted) toast(context, msg ?? 'Signed by KRA.');
     } on SaleError catch (e) {
       if (mounted) toast(context, e.message);
@@ -203,12 +205,20 @@ class _SaleDetailState extends State<SaleDetail> {
     setState(() => _busy = true);
     try {
       String? warning;
+      var refundId = 0;
       if (isEtrApp) {
-        warning = (await Etr.refund(widget.saleId, reasonCd: code?.code ?? '06', note: reason.trim())).$2;
+        final r = await Etr.refund(widget.saleId, reasonCd: code?.code ?? '06', note: reason.trim());
+        refundId = r.$1;
+        warning = r.$2;
       } else {
-        await Sales.refund(widget.saleId, reason: reason.trim());
+        refundId = await Sales.refund(widget.saleId, reason: reason.trim());
       }
       changed();
+      // the credit note / refund receipt prints by itself (same setting as sale receipts)
+      if (Settings.i.printAfterSale && refundId > 0) {
+        final ok = await printSale(refundId);
+        if (!ok && mounted) toast(context, 'Printer not found. Choose it in More > Printer, then reprint from the refund receipt.');
+      }
       if (mounted) toast(context, warning ?? (isEtrApp && _etr != null ? 'Credit note signed by KRA. Stock returned.' : 'Refunded. Stock returned.'));
       _load();
     } on SaleError catch (e) {

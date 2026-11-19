@@ -223,6 +223,68 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (mounted) setState(() => _rows = r);
   }
 
+  /// Change the tax group of many products at once: all, one category, or one tax group.
+  Future<void> _bulkTax() async {
+    final cats = await Db.q('SELECT id, name FROM categories ORDER BY name');
+    if (!mounted) return;
+    final scopes = <(String, String)>[
+      ('all', 'All products'),
+      for (final g in taxGroups) ('tax:${g.code}', 'Products now in ${g.label}'),
+      for (final c in cats) ('cat:${c['id']}', 'Category: ${c['name']}'),
+    ];
+    final scope = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          ListTile(title: Text('Which products?', style: h(17))),
+          for (final sc in scopes) ListTile(title: Text(sc.$2), onTap: () => Navigator.pop(ctx, sc.$1)),
+        ]),
+      ),
+    );
+    if (scope == null || !mounted) return;
+    final to = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text('New tax group', style: h(17))),
+          for (final g in taxGroups) ListTile(title: Text(g.label), onTap: () => Navigator.pop(ctx, g.code)),
+        ]),
+      ),
+    );
+    if (to == null || !mounted) return;
+    var where = '1 = 1';
+    final args = <Object?>[];
+    if (scope.startsWith('cat:')) {
+      where = 'category_id = ?';
+      args.add(int.parse(scope.substring(4)));
+    } else if (scope.startsWith('tax:')) {
+      final g = scope.substring(4);
+      // old products without a group are matched by their rate, as everywhere else
+      where = "(tax_cd = ? OR (COALESCE(tax_cd, '') = '' AND CASE WHEN tax_rate >= 15 THEN 'B' WHEN tax_rate >= 7 THEN 'E' ELSE 'A' END = ?))";
+      args.addAll([g, g]);
+    }
+    final count = await Db.count('SELECT COUNT(*) FROM products WHERE $where', args);
+    if (!mounted) return;
+    if (count == 0) {
+      toast(context, 'No products there.');
+      return;
+    }
+    final label = scopes.firstWhere((x) => x.$1 == scope).$2;
+    if (!await confirm(context, 'Change $count products?', '$label -> ${taxGroup(to).label}.\n'
+        'Prices stay the same (VAT inclusive). Sales already made keep their old tax.${isEtrApp ? ' The items are sent to KRA again with the new tax type.' : ''}', ok: 'Change')) {
+      return;
+    }
+    final db = await Db.get();
+    await db.transaction((tx) async {
+      await tx.rawUpdate('UPDATE products SET tax_cd = ?, tax_rate = ?, vat_ref = \'\', kra_reg = 0 WHERE $where', [to, taxGroup(to).rate, ...args]);
+      await Db.audit(tx, Session.i.userId, 'tax_bulk', '$count products ($label) -> $to');
+    });
+    changed();
+    _load();
+    if (mounted) toast(context, '$count products changed to ${taxGroup(to).label}.');
+  }
+
   Future<void> _open([int? id]) async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProductForm(id: id)));
     _load();
@@ -235,6 +297,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final shown = _rows.where((p) => q.isEmpty || s(p['name']).toLowerCase().contains(q) || s(p['sku']).toLowerCase().contains(q) || s(p['barcode']) == q).toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Products'), actions: [
+        IconButton(tooltip: 'Change tax group', onPressed: _bulkTax, icon: const Icon(Icons.percent)),
         TextButton(onPressed: () { setState(() => _inactive = !_inactive); _load(); }, child: Text(_inactive ? 'Show active' : 'Show archived')),
       ]),
       floatingActionButton: FloatingActionButton.extended(onPressed: () => _open(), icon: const Icon(Icons.add), label: const Text('Product')),

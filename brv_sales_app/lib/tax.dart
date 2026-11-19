@@ -1,7 +1,7 @@
 import 'fmt.dart';
 import 'settings.dart';
 
-/// The four VAT groups (KRA eTIMS tax types) and their general legal references.
+/// The VAT groups (KRA eTIMS tax types A to E) and their general legal references.
 class TaxGroup {
   final String code;
   final String name;
@@ -15,6 +15,7 @@ const taxGroups = <TaxGroup>[
   TaxGroup('A', 'Exempt', 0, 'VAT Act 2013, s.2 and First Schedule (exempt supplies)'),
   TaxGroup('B', 'Standard rate 16%', 16, 'VAT Act 2013, s.5(2)(a) (standard rate)'),
   TaxGroup('C', 'Zero-rated', 0, 'VAT Act 2013, s.7 and Second Schedule (zero-rated supplies)'),
+  TaxGroup('D', 'Non-VAT', 0, 'Not subject to VAT (outside the scope of the VAT Act 2013)'),
   TaxGroup('E', 'Reduced rate 8%', 8, 'VAT Act 2013, s.5(2)(b) (8% rate)'),
 ];
 

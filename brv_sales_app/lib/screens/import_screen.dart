@@ -207,7 +207,7 @@ class _ImportScreenState extends State<ImportScreen> {
               'Choose an Excel (.xlsx) or CSV file with one item per row. The first row holds the column names:\n\n'
               '• Item name and Price (VAT incl.): needed\n'
               '• Item code, Category, Cost, Barcode, Unit, Reorder level, Opening stock, Track stock (Yes/No), Active (Yes/No)\n'
-              '• Tax type: A Exempt, B 16%, C Zero-rated, E 8% (or a Tax rate % column)\n'
+              '• Tax type: A Exempt, B 16%, C Zero-rated, D Non-VAT, E 8% (or a Tax rate % column)\n'
               '• VAT reference (the Schedule paragraph, or General)\n'
               '• KRA: Item class, Item type (1 raw, 2 finished, 3 service), Origin (KE), Packaging unit (NT)\n\n'
               'Categories are created by themselves. An item with the same code (or barcode, or name) is updated, not doubled.',
