@@ -4,3 +4,4 @@ from . import requisition
 from . import stock_picking
 from . import pos_session
 from . import res_users
+from . import pos_order

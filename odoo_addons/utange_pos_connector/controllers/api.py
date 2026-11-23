@@ -9,6 +9,7 @@ action carries a signed cashier token.
 Sales are saved with Odoo's own pos.order.create_from_ui, exactly like the POS
 screen, so stock, accounting, session totals and reports are the same.
 """
+import json
 import time as _time
 import uuid
 from datetime import datetime, time, timedelta
@@ -279,6 +280,7 @@ class UtangePosApi(http.Controller):
             'needs_open_count': bool(session and config.utange_require_sheet and not self._sheet_of(session)),
             **self._receipt_printer(config),
             'kitchen_printers': self._kitchen_printers(config),
+            'tables': self._restaurant_on(config),
             'points': [{'point': pt, 'label': label, 'location': loc.display_name} for pt, label, loc in config._utange_points()],
         }
 
@@ -335,8 +337,9 @@ class UtangePosApi(http.Controller):
     # ------------------------------------------------------------------
     @http.route('/utange/pos/sell', type='json', auth='public', methods=['POST'], csrf=False)
     def sell(self, pin=None, config_id=None, cashier=None, lines=None, payments=None, customer_name=None, customer_id=None,
-             uid=None, **kw):
-        """lines: [{product_id, qty, price?}]; payments: [{method_id, amount, ref?}]"""
+             uid=None, order_id=None, **kw):
+        """lines: [{product_id, qty, price?, uuid?}]; payments: [{method_id, amount, ref?}];
+        order_id: a table order (draft in Odoo) to pay instead of making a new order."""
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
@@ -356,31 +359,17 @@ class UtangePosApi(http.Controller):
             done = Order.search([('access_token', '=', uid)], limit=1)
             if done:
                 return {'ok': True, 'order': self._sale(done, detail=True)}
-        if any(l.get('price') not in (None, '') for l in (lines or [])) and emp and role != 'manager' \
-                and getattr(config, 'restrict_price_control', False):
-            return {'ok': False, 'error': 'Only a POS manager can change prices (same as Odoo POS).'}
-        allowed = set(config._utange_products().ids)
+        table_order = Order
+        if order_id:
+            table_order = Order.browse(int(order_id)).exists()
+            if table_order and table_order.state != 'draft':
+                return {'ok': True, 'order': self._sale(table_order, detail=True)}  # already paid (e.g. a retry)
+            if not table_order or table_order.session_id != session:
+                return {'ok': False, 'error': 'This table order is no longer open in this shift. Open the table again.'}
+        ui_lines, total, tax_total, line_err = self._ui_lines(config, emp, role, lines)
+        if line_err:
+            return {'ok': False, 'error': line_err}
         Product = env['product.product'].sudo()
-        ui_lines, total, tax_total = [], 0.0, 0.0
-        for l in (lines or [])[:200]:
-            p = Product.browse(int(l.get('product_id') or 0)).exists()
-            qty = _f(l.get('qty'))
-            if not p or p.id not in allowed or qty == 0:
-                continue
-            taxes, _e, _i = self._line_values(p, 1, p.lst_price)
-            unit = p.lst_price
-            if l.get('price') not in (None, ''):
-                unit = _f(l['price']) / (_i / _e) if taxes and _e else _f(l['price'])
-            taxes, excl, incl = self._line_values(p, qty, unit)
-            total += incl
-            tax_total += incl - excl
-            ui_lines.append([0, 0, {
-                'product_id': p.id, 'qty': qty, 'price_unit': unit, 'discount': 0,
-                'price_subtotal': excl, 'price_subtotal_incl': incl,
-                'tax_ids': [(6, 0, taxes.ids)], 'full_product_name': p.display_name, 'pack_lot_ids': [],
-            }])
-        if not ui_lines:
-            return {'ok': False, 'error': 'Add at least one item.'}
         if config.utange_block_zero:
             wanted = {}
             for ln in ui_lines:
@@ -422,10 +411,10 @@ class UtangePosApi(http.Controller):
             partner = Partner.search([('name', '=ilike', name)], limit=1) or Partner.create({'name': name[:80]})
         if not partner and any(self._pay_later(methods[p[2]['payment_method_id']]) for p in ui_payments):
             return {'ok': False, 'error': 'Choose the customer for a Customer Account sale.'}
-        P = env['ir.config_parameter'].sudo()
-        seq = int(P.get_param(PARAM_SEQ % session.id) or 0) + 1
-        P.set_param(PARAM_SEQ % session.id, str(seq))
-        ref = 'Order %05d-%03d-%04d' % (session.id, APP_LOGIN_NUMBER, seq)
+        if table_order:
+            ref, seq = table_order.pos_reference, table_order.sequence_number
+        else:
+            ref, seq = self._next_ref(session)
         data = {
             'name': ref, 'uid': ref[6:], 'sequence_number': seq,
             'pos_session_id': session.id, 'user_id': session.user_id.id,
@@ -441,6 +430,12 @@ class UtangePosApi(http.Controller):
         }
         if emp:
             data['employee_id'] = emp.id
+        if table_order:
+            data.update({'server_id': table_order.id, 'table_id': table_order.table_id.id or False,
+                         'customer_count': table_order.customer_count or 1,
+                         'access_token': uid or table_order.access_token or str(uuid.uuid4())})
+            if not partner and table_order.partner_id:
+                data['partner_id'] = table_order.partner_id.id
         try:
             res = Order.create_from_ui([{'data': data, 'to_invoice': False}], draft=False)
         except (UserError, ValidationError) as e:
@@ -450,6 +445,212 @@ class UtangePosApi(http.Controller):
         if not order:
             return {'ok': False, 'error': 'Odoo did not save the sale.'}
         return {'ok': True, 'order': self._sale(order, detail=True)}
+
+    def _next_ref(self, session):
+        P = request.env['ir.config_parameter'].sudo()
+        seq = int(P.get_param(PARAM_SEQ % session.id) or 0) + 1
+        P.set_param(PARAM_SEQ % session.id, str(seq))
+        return 'Order %05d-%03d-%04d' % (session.id, APP_LOGIN_NUMBER, seq), seq
+
+    def _ui_lines(self, config, emp, role, lines):
+        """POS order lines from the app's [{product_id, qty, price?, uuid?}]: (ui_lines, total, tax, error)."""
+        if any(l.get('price') not in (None, '') for l in (lines or [])) and emp and role != 'manager' \
+                and getattr(config, 'restrict_price_control', False):
+            return [], 0.0, 0.0, 'Only a POS manager can change prices (same as Odoo POS).'
+        allowed = set(config._utange_products().ids)
+        Product = request.env['product.product'].sudo()
+        has_uuid = 'uuid' in request.env['pos.order.line']._fields
+        ui_lines, total, tax_total = [], 0.0, 0.0
+        for l in (lines or [])[:200]:
+            p = Product.browse(int(l.get('product_id') or 0)).exists()
+            qty = _f(l.get('qty'))
+            if not p or p.id not in allowed or qty == 0:
+                continue
+            taxes, _e, _i = self._line_values(p, 1, p.lst_price)
+            unit = p.lst_price
+            if l.get('price') not in (None, ''):
+                unit = _f(l['price']) / (_i / _e) if taxes and _e else _f(l['price'])
+            taxes, excl, incl = self._line_values(p, qty, unit)
+            total += incl
+            tax_total += incl - excl
+            vals = {
+                'product_id': p.id, 'qty': qty, 'price_unit': unit, 'discount': 0,
+                'price_subtotal': excl, 'price_subtotal_incl': incl,
+                'tax_ids': [(6, 0, taxes.ids)], 'full_product_name': p.display_name, 'pack_lot_ids': [],
+            }
+            if has_uuid:
+                vals['uuid'] = str(l.get('uuid') or '') or str(uuid.uuid4())
+            ui_lines.append([0, 0, vals])
+        if not ui_lines:
+            return [], 0.0, 0.0, 'Add at least one item.'
+        return ui_lines, total, tax_total, None
+
+    # ------------------------------------------------------------------
+    # Tables (Odoo restaurant floors): the same open table orders as the Odoo POS screen
+    # ------------------------------------------------------------------
+    def _restaurant_on(self, config):
+        return bool('floor_ids' in config._fields and getattr(config, 'module_pos_restaurant', False) and config.floor_ids
+                    and 'table_id' in request.env['pos.order']._fields)
+
+    def _open_orders(self, session, table=None):
+        dom = [('session_id', '=', session.id), ('state', '=', 'draft'), ('table_id', '!=', False)]
+        if table:
+            dom.append(('table_id', '=', table.id))
+        return request.env['pos.order'].sudo().search(dom, order='id')
+
+    @http.route('/utange/pos/tables', type='json', auth='public', methods=['POST'], csrf=False)
+    def tables(self, pin=None, config_id=None, **kw):
+        """Floors and tables of the POS, with the open orders on each table (like the Odoo floor plan)."""
+        config, _e, _r, bad = self._guard(pin, config_id, need_cashier=False)
+        if bad:
+            return bad
+        if not self._restaurant_on(config):
+            return {'ok': True, 'floors': []}
+        session = self._open_session(config)
+        busy = {}
+        if session:
+            for o in self._open_orders(session):
+                b = busy.setdefault(o.table_id.id, {'orders': 0, 'amount': 0.0, 'guests': 0})
+                b['orders'] += 1
+                b['amount'] += o.amount_total
+                b['guests'] += o.customer_count or 0
+        floors = []
+        for f in config.floor_ids.sorted(lambda f: (f.sequence, f.id)):
+            tables = f.table_ids.filtered(lambda t: t.active).sorted(lambda t: (t.name or '', t.id))
+            floors.append({'id': f.id, 'name': f.name, 'tables': [
+                {'id': tb.id, 'name': tb.name, 'seats': tb.seats or 0, **busy.get(tb.id, {'orders': 0, 'amount': 0.0, 'guests': 0})}
+                for tb in tables]})
+        return {'ok': True, 'floors': floors}
+
+    def _odoo_sent(self, o):
+        """Odoo POS's own record of what was sent to the kitchen: {product_id: qty}."""
+        out = {}
+        if 'last_order_preparation_change' not in o._fields or not o.last_order_preparation_change:
+            return out
+        try:
+            for v in json.loads(o.last_order_preparation_change).values():
+                pid = int(v.get('product_id') or 0)
+                out[pid] = out.get(pid, 0.0) + _f(v.get('quantity'))
+        except Exception:
+            return {}
+        return out
+
+    def _table_order(self, o):
+        try:
+            mine = json.loads(o.utange_sent or '{}')
+        except Exception:
+            mine = {}
+        return {
+            'id': o.id, 'name': o.name, 'ref': o.pos_reference or '', 'guests': o.customer_count or 0,
+            'amount': o.amount_total, 'customer': o.partner_id.name or '',
+            'cashier': (o.employee_id.name if 'employee_id' in o._fields and o.employee_id else o.user_id.name) or '',
+            'lines': [{'product_id': l.product_id.id, 'name': l.full_product_name or l.product_id.display_name, 'qty': l.qty,
+                       'uuid': (l.uuid if 'uuid' in l._fields else '') or ''} for l in o.lines],
+            'sent': mine,  # {printer_id: {product_id: qty}} printed from the handheld
+            'odoo_sent': {str(k): v for k, v in self._odoo_sent(o).items()},  # printed from either side, per product
+        }
+
+    @http.route('/utange/pos/table_orders', type='json', auth='public', methods=['POST'], csrf=False)
+    def table_orders(self, pin=None, config_id=None, table_id=None, **kw):
+        config, _e, _r, bad = self._guard(pin, config_id, need_cashier=False)
+        if bad:
+            return bad
+        session = self._open_session(config)
+        table = request.env['restaurant.table'].sudo().browse(int(table_id or 0)).exists() if self._restaurant_on(config) else None
+        if not session or not table:
+            return {'ok': True, 'orders': []}
+        return {'ok': True, 'orders': [self._table_order(o) for o in self._open_orders(session, table)]}
+
+    @http.route('/utange/pos/table_save', type='json', auth='public', methods=['POST'], csrf=False)
+    def table_save(self, pin=None, config_id=None, cashier=None, table_id=None, order_id=None, lines=None, sent=None,
+                   guests=None, uid=None, **kw):
+        """Saves the table order in Odoo as an open (unpaid) POS order on the table, exactly like the Odoo POS screen,
+        so it shows on the Odoo floor plan and can be continued or paid on either side.
+        lines: [{product_id, qty, uuid?}]; sent: {printer_id: {product_id: qty}} printed from the handheld."""
+        config, emp, role, bad = self._guard(pin, config_id, cashier)
+        if bad:
+            return bad
+        denied = self._perm_denied(emp, 'sell')
+        if denied:
+            return {'ok': False, 'error': denied}
+        env = request.env
+        session = self._open_session(config)
+        if not session:
+            return {'ok': False, 'error': 'The shift is closed. Open it first (More > Shift).'}
+        if not self._restaurant_on(config):
+            return {'ok': False, 'error': 'Tables are not on for this POS in Odoo.'}
+        table = env['restaurant.table'].sudo().browse(int(table_id or 0)).exists()
+        if not table:
+            return {'ok': False, 'error': 'That table no longer exists in Odoo.'}
+        Order = env['pos.order'].sudo()
+        order = Order
+        if order_id:
+            order = Order.browse(int(order_id)).exists()
+            if not order or order.state != 'draft':
+                return {'ok': False, 'error': 'This table order was already paid or removed (on another device or in Odoo).',
+                        'gone': True}
+        elif uid:
+            order = Order.search([('access_token', '=', str(uid)[:64]), ('state', '=', 'draft')], limit=1)
+        lines = [l for l in (lines or []) if _f(l.get('qty')) > 0]
+        if not lines:
+            if order:  # everything taken off: remove the open order, like deleting it in the Odoo POS
+                Order.remove_from_ui([order.id])
+            return {'ok': True, 'order': None}
+        ui_lines, total, tax_total, line_err = self._ui_lines(config, emp, role, lines)
+        if line_err:
+            return {'ok': False, 'error': line_err}
+        now = fields.Datetime.to_string(fields.Datetime.now())
+        if order:
+            ref, seq = order.pos_reference, order.sequence_number
+        else:
+            ref, seq = self._next_ref(session)
+        data = {
+            'name': ref, 'uid': ref[6:], 'sequence_number': seq,
+            'pos_session_id': session.id, 'user_id': session.user_id.id,
+            'partner_id': order.partner_id.id if order and order.partner_id else False,
+            'date_order': now, 'creation_date': now,
+            'fiscal_position_id': config.default_fiscal_position_id.id or False,
+            'pricelist_id': config.pricelist_id.id or False,
+            'amount_total': round(total, 2), 'amount_tax': round(tax_total, 2), 'amount_paid': 0, 'amount_return': 0,
+            'lines': ui_lines, 'statement_ids': [],
+            'to_invoice': False, 'shipping_date': False, 'is_tipped': False, 'tip_amount': 0,
+            'table_id': table.id, 'customer_count': max(int(_f(guests)) or (order.customer_count if order else 0) or 1, 1),
+            'access_token': (order.access_token if order else '') or str(uid or '')[:64] or str(uuid.uuid4()),
+        }
+        if order:
+            data['server_id'] = order.id
+        if emp:
+            data['employee_id'] = emp.id
+        clean = {}
+        for pr, items in (sent or {}).items():
+            if isinstance(items, dict):
+                clean[str(pr)] = {str(k): _f(v) for k, v in items.items() if _f(v) > 0}
+        # Odoo POS's own "already sent to the kitchen" record (same format as its Order button), so the Odoo POS
+        # screen shows these as sent and does not print them again
+        per_product = {}
+        for items in clean.values():
+            for pid, q in items.items():
+                per_product[int(pid)] = max(per_product.get(int(pid), 0.0), q)
+        change = {}
+        for ln in ui_lines:
+            v = ln[2]
+            q = min(per_product.get(v['product_id'], 0.0), v['qty'])
+            if q <= 0 or not v.get('uuid'):
+                continue
+            per_product[v['product_id']] -= q
+            change['%s - ' % v['uuid']] = {'attribute_value_ids': [], 'line_uuid': v['uuid'], 'product_id': v['product_id'],
+                                           'name': v['full_product_name'], 'note': '', 'quantity': q}
+        data['last_order_preparation_change'] = json.dumps(change)
+        try:
+            res = Order.create_from_ui([{'data': data, 'to_invoice': False}], draft=True)
+        except (UserError, ValidationError) as e:
+            request.env.cr.rollback()
+            return {'ok': False, 'error': _err(e)}
+        saved = Order.browse(res[0]['id']) if res else Order.search([('pos_reference', '=', ref)], limit=1)
+        if not saved:
+            return {'ok': False, 'error': 'Odoo did not save the table order.'}
+        saved.write({'utange_sent': json.dumps(clean)})
+        return {'ok': True, 'order': self._table_order(saved)}
 
     def _sale(self, o, detail=False):
         data = {

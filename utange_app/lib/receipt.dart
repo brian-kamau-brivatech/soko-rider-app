@@ -211,7 +211,7 @@ class Receipt {
 
   /// Kitchen / bar order ticket (big print, no prices) for the Odoo preparation printers.
   static Future<Uint8List> ticket({required String printer, required String order, required String cashier,
-      required List<(double, String)> lines, String note = ''}) async {
+      required List<(double, String)> lines, List<(double, String)> cancelled = const [], String note = ''}) async {
     const pad = 8.0;
     const inner = width - pad * 2;
     final ops = <(double, void Function(Canvas, double))>[];
@@ -240,6 +240,14 @@ class Receipt {
     for (final l in lines) {
       left('${_q(l.$1)} x ${l.$2}', 30, bold: true);
       gap(4);
+    }
+    if (cancelled.isNotEmpty) {
+      if (lines.isNotEmpty) dashes();
+      center('*** CANCELLED ***', 26, bold: true);
+      for (final l in cancelled) {
+        left('- ${_q(l.$1)} x ${l.$2}', 28, bold: true);
+        gap(4);
+      }
     }
     if (note.isNotEmpty) {
       dashes();
@@ -278,6 +286,53 @@ class Receipt {
       }
     }
     return failed;
+  }
+
+  /// Like the Odoo POS "Order" button: sends to each kitchen / bar printer only what changed since the last
+  /// ticket it printed for this order (new items, more of an item, and CANCELLED for items taken off).
+  /// [sent] remembers, per printer id, the quantities already on its tickets; it is updated only for the
+  /// printers that printed, so pressing again re-sends just to the ones that failed.
+  /// Returns (printers that printed, printers that did not answer).
+  static Future<(List<String>, List<String>)> printKitchenChanges({required PosSetup st, required String order,
+      required String cashier, required List<(int, double, String, List<int>)> cart,
+      required Map<int, Map<int, double>> sent, String note = ''}) async {
+    final done = <String>[], failed = <String>[];
+    for (final pr in st.kitchenPrinters) {
+      final mine = [for (final c in cart) if (pr.categIds.isEmpty || c.$4.any(pr.categIds.contains)) c];
+      final before = sent[pr.id] ?? const <int, double>{};
+      final names = {for (final c in mine) c.$1: c.$3};
+      final now = {for (final c in mine) c.$1: c.$2};
+      final add = <(double, String)>[], cancel = <(double, String)>[];
+      for (final c in mine) {
+        final d = c.$2 - (before[c.$1] ?? 0);
+        if (d > 0.0001) add.add((d, c.$3));
+        if (d < -0.0001) cancel.add((-d, c.$3));
+      }
+      for (final e in before.entries) {
+        if (!now.containsKey(e.key) && e.value > 0.0001) cancel.add((e.value, _names[e.key] ?? names[e.key] ?? 'Item'));
+      }
+      if (add.isEmpty && cancel.isEmpty) continue;
+      try {
+        final png = await ticket(printer: pr.name, order: order, cashier: cashier, lines: add, cancelled: cancel, note: note);
+        if (await NetPrinter.send(pr.ip, pr.via, png)) {
+          sent[pr.id] = Map<int, double>.from(now);
+          done.add(pr.name);
+        } else {
+          failed.add(pr.name);
+        }
+      } catch (_) {
+        failed.add(pr.name);
+      }
+    }
+    return (done, failed);
+  }
+
+  /// Names of items once sent, so a CANCELLED line can still name an item that was taken off the order.
+  static final Map<int, String> _names = {};
+  static void rememberNames(Iterable<(int, String)> items) {
+    for (final i in items) {
+      _names[i.$1] = i.$2;
+    }
   }
 
   /// The bill: on the Odoo bill printer when the POS has one (pos_escpos) and the handheld is on "Automatic",

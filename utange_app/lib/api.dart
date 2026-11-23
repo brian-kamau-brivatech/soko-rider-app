@@ -14,7 +14,8 @@ class ApiError implements Exception {
   final bool cashier; // a cashier must sign in
   final bool login; // manager must sign in again
   final bool countRequired;
-  ApiError(this.message, {this.device = false, this.cashier = false, this.login = false, this.countRequired = false});
+  final bool gone; // the table order was paid or removed elsewhere
+  ApiError(this.message, {this.device = false, this.cashier = false, this.login = false, this.countRequired = false, this.gone = false});
   @override
   String toString() => message;
 }
@@ -95,7 +96,8 @@ class Api {
           device: res['device'] == true,
           cashier: res['cashier_required'] == true,
           login: res['denied'] == true,
-          countRequired: res['count_required'] == true);
+          countRequired: res['count_required'] == true,
+          gone: res['gone'] == true);
     }
     return res;
   }
@@ -187,6 +189,7 @@ class PosSetup {
   final String receiptPrinterIp;
   final String receiptPrinterVia; // odoo (pos_escpos) | direct | ''
   final List<KitchenPrinter> kitchenPrinters;
+  final bool tables; // Odoo restaurant floors / tables are on for this POS
   final List<Map<String, dynamic>> points;
   PosSetup.fromJson(Map<String, dynamic> j)
       : configName = ss((j['config'] ?? const {})['name']),
@@ -208,6 +211,7 @@ class PosSetup {
         receiptPrinterIp = ss(j['receipt_printer_ip']),
         receiptPrinterVia = ss(j['receipt_printer_via']),
         kitchenPrinters = ll(j['kitchen_printers']).map(KitchenPrinter.fromJson).toList(),
+        tables = j['tables'] == true,
         points = ll(j['points']);
 }
 

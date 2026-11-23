@@ -17,7 +17,15 @@ class CartLine {
 class PaymentScreen extends StatefulWidget {
   final PosSetup setup;
   final List<CartLine> lines;
-  const PaymentScreen({super.key, required this.setup, required this.lines});
+  /// What the Order button already sent to each kitchen / bar printer (printer id -> product id -> qty).
+  final Map<int, Map<int, double>> sent;
+  /// The table / name given when the order was sent (shown on the tickets).
+  final String label;
+  /// The open table order in Odoo being paid (null for a direct sale).
+  final int? orderId;
+  const PaymentScreen({super.key, required this.setup, required this.lines, Map<int, Map<int, double>>? sent, this.label = '',
+      this.orderId})
+      : sent = sent ?? const {};
   @override
   State<PaymentScreen> createState() => _PaymentScreenState();
 }
@@ -74,6 +82,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final amount = _method.cash ? _tendered : _total;
       final r = await Api.call('/utange/pos/sell', Store.i.base({
         'uid': _uid,
+        if (widget.orderId != null) 'order_id': widget.orderId,
         'lines': [for (final l in widget.lines) {'product_id': l.product.id, 'qty': l.qty}],
         'payments': [
           {'method_id': _method.id, 'amount': amount, if (_ref.text.trim().isNotEmpty) 'ref': _ref.text.trim()}
@@ -84,9 +93,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final sale = Sale.fromJson(Map<String, dynamic>.from(r['order'] as Map));
       if (widget.setup.kitchenPrinters.isNotEmpty) {
         final messenger = ScaffoldMessenger.of(context);
-        Receipt.printKitchen(sale, widget.setup,
-                [for (final l in widget.lines) (l.qty, l.product.name, l.product.categIds)])
-            .then((failed) {
+        // only what the Order button has not sent yet (nothing again if it was all sent)
+        Receipt.printKitchenChanges(
+          st: widget.setup,
+          order: widget.label.isEmpty ? sale.name : '${widget.label} · ${sale.name}',
+          cashier: sale.cashier,
+          cart: [for (final l in widget.lines) (l.product.id, l.qty, l.product.name, l.product.categIds)],
+          sent: {for (final e in widget.sent.entries) e.key: Map<int, double>.from(e.value)},
+          note: sale.customer.isEmpty ? '' : 'Customer: ${sale.customer}',
+        ).then((res) {
+          final failed = res.$2;
           if (failed.isNotEmpty) {
             messenger.showSnackBar(SnackBar(content: Text('Order ticket not printed on: ${failed.join(', ')}. Check the printer is on.')));
           }
