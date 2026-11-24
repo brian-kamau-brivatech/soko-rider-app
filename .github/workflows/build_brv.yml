@@ -6,6 +6,7 @@ on:
     paths:
       - 'brv_pos/**'
       - '.github/workflows/build_brv.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:

@@ -7,6 +7,7 @@ on:
       - 'brv_sales_app/**'
       - 'brv_pos/android_overrides/**'
       - '.github/workflows/build_brv_sales.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:

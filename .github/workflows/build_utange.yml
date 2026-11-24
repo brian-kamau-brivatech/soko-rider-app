@@ -6,6 +6,7 @@ on:
     paths:
       - 'utange_app/**'
       - '.github/workflows/build_utange.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
