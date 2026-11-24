@@ -16,7 +16,7 @@ class PosOrder(models.Model):
     utange_staff_cleared = fields.Boolean('Employee bill cleared', copy=False, readonly=True)
     utange_staff_cleared_by = fields.Char('Cleared by', copy=False, readonly=True)
     utange_staff_cleared_date = fields.Datetime('Cleared on', copy=False, readonly=True)
-    utange_staff_reason = fields.Char('Employee bill reason', copy=False, readonly=True)
+    utange_staff_reason = fields.Char('Staff bill note', copy=False, readonly=True)
 
     def _utange_check_clear(self):
         u = self.env.user
@@ -35,6 +35,32 @@ class PosOrder(models.Model):
         self.filtered('utange_staff_cleared').write({'utange_staff_cleared': False, 'utange_staff_cleared_by': False,
                                                       'utange_staff_cleared_date': False})
         return True
+
+    # ------------------------------------------------------------------
+    # Staff bills from the Odoo POS screen: the employee and the note travel with the order
+    # ------------------------------------------------------------------
+    @api.model
+    def _order_fields(self, ui_order):
+        res = super()._order_fields(ui_order)
+        if ui_order.get('utange_staff_id'):
+            res['utange_staff_id'] = int(ui_order['utange_staff_id'])
+            res['utange_staff_reason'] = (ui_order.get('utange_staff_reason') or '').strip()[:200] or False
+        return res
+
+    @api.model
+    def _process_order(self, order, draft, existing_order):
+        data = order.get('data') or {}
+        staff_pms = self.env['pos.payment.method'].sudo().search([('utange_staff', '=', True)]).ids
+        used = [p[2].get('payment_method_id') for p in (data.get('statement_ids') or [])
+                if isinstance(p, (list, tuple)) and len(p) > 2 and isinstance(p[2], dict)]
+        if staff_pms and any(m in staff_pms for m in used):
+            emp = self.env['hr.employee'].sudo().browse(int(data.get('utange_staff_id') or 0)).exists()
+            if not emp:
+                raise UserError('Staff bills: choose the employee (from the employees list).')
+            if len((data.get('utange_staff_reason') or '').strip()) < 3:
+                raise UserError('Staff bills: write a note (it shows in the Employees bills report).')
+            data['partner_id'] = self._utange_staff_partner(emp).id
+        return super()._process_order(order, draft, existing_order)
 
     @api.model
     def _utange_staff_partner(self, employee):

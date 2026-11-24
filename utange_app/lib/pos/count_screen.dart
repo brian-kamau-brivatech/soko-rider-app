@@ -172,7 +172,7 @@ class _CountScreenState extends State<CountScreen> {
                   child: Text(
                     _open
                         ? 'Only a manager can change the counts: check the shelf against these figures and confirm. '
-                            'If something is missing, open the shift and sell it as an Employee bill'
+                            'If something is missing, open the shift and sell it with the Staff bills payment'
                             '${_previousCloser.isEmpty ? '' : ' to $_previousCloser'} (who closed the last shift).'
                         : 'Only a manager can change the counts. These are the figures the system expects; confirm to close. '
                             'Anything missing will show at the next opening.',

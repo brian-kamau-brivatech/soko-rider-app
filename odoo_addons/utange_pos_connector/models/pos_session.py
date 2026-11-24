@@ -17,6 +17,11 @@ class PosSession(models.Model):
     and none closes before the closing count is confirmed (when the POS asks for it)."""
     _inherit = 'pos.session'
 
+    def _loader_params_pos_payment_method(self):
+        res = super()._loader_params_pos_payment_method()
+        res['search_params']['fields'].append('utange_staff')
+        return res
+
     def _utange_sheet(self):
         self.ensure_one()
         return self.env['utange.stock.sheet'].sudo().search(

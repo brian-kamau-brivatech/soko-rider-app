@@ -23,8 +23,10 @@ through the Odoo module `odoo_addons/utange_pos_connector`.
   kitchen / bar and prints the bill, but cannot charge. Set it in Odoo (BRV Access tab) or in the Manager app
   (Reports > Staff rights: Waiter / Cashier / Everything). People who could sell before keep charging.
 * **Counts are for managers**: with "Only managers change stock counts" (Handheld settings, on by default) a cashier
-  opens and closes with the figures the system shows. A shortage found at opening is sold as an **Employee bill** to
-  the person who closed the last shift (Charge > Employee bill; needs the Customer Account payment method).
+  opens and closes with the figures the system shows. A shortage found at opening is sold with the **Staff bills** payment to
+  the person who closed the last shift (Charge > Staff bills: choose the employee from the list and write a note).
+  The module adds the "Staff bills" payment method to every Point of Sale by itself. On the Odoo POS screen too, paying
+  with Staff bills asks for the employee (employees list only) and a note; Odoo refuses a Staff bills order without them.
 * **Employees bills**: Odoo > Point of Sale > Handheld > Employees bills, and Manager app > Reports > Employees bills
   (clear when paid / deducted).
 * **Open bills per person**: tables show the waiter's name; "My bills" filter; the people icon lists unpaid bills per

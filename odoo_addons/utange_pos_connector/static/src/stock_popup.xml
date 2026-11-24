@@ -11,8 +11,8 @@
                 <div class="px-3 pt-2 pb-1 border-bottom">
                     <div t-if="props.locked" class="alert alert-info py-2 mb-2">
                         Only a manager can change the counts. Confirm the figures as shown.
-                        <t t-if="isOpen">If something is missing on the shelf, sell it after opening as an
-                            <b>Employee bill</b><t t-if="props.previousCloser"> to <b t-esc="props.previousCloser"/></t>
+                        <t t-if="isOpen">If something is missing on the shelf, sell it after opening with the
+                            <b>Staff bills</b> payment<t t-if="props.previousCloser"> to <b t-esc="props.previousCloser"/></t>
                             (the person who closed the last shift).</t>
                     </div>
                     <div class="text-muted small mb-2" t-else="">

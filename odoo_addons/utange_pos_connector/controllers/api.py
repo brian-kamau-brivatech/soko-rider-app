@@ -268,7 +268,7 @@ class UtangePosApi(http.Controller):
             'session': {'id': session.id, 'name': session.name, 'user': session.user_id.name} if session else None,
             'payment_methods': [{'id': m.id, 'name': m.name, 'cash': bool(m.is_cash_count),
                                  'mpesa': 'mpesa' in (m.name or '').lower().replace('-', '').replace(' ', ''),
-                                 'account': self._pay_later(m)}
+                                 'account': self._pay_later(m), 'staff': bool(m.utange_staff)}
                                 for m in config.payment_method_ids],
             'categories': sorted(cats.values(), key=lambda c: (c['sequence'], c['name'])),
             'products': items,
@@ -388,12 +388,14 @@ class UtangePosApi(http.Controller):
         total = round(total, 2)
         methods = {m.id: m for m in config.payment_method_ids}
         staff = env['hr.employee'].sudo().browse(int(staff_id)).exists() if str(staff_id or '').isdigit() else None
+        staff_pm = config._utange_staff_method(create=bool(staff))
+        if not staff and staff_pm and any(int(p.get('method_id') or 0) == staff_pm.id for p in (payments or [])):
+            return {'ok': False, 'error': 'Staff bills: choose the employee from the list.'}
         if staff:
-            later = [m for m in config.payment_method_ids if self._pay_later(m)]
-            if not later:
-                return {'ok': False, 'error': 'Employee bills need the "Customer Account" payment method on this POS '
-                                              '(Odoo: Point of Sale > Configuration > Settings > Payment methods).'}
-            payments = [{'method_id': later[0].id, 'amount': total}]
+            if len((staff_reason or '').strip()) < 3:
+                return {'ok': False, 'error': 'Staff bills: write a note (it shows in the Employees bills report).'}
+            methods[staff_pm.id] = staff_pm
+            payments = [{'method_id': staff_pm.id, 'amount': total}]
         ui_payments, paid, change = [], 0.0, 0.0
         now = fields.Datetime.to_string(fields.Datetime.now())
         for pay in (payments or []):
@@ -440,6 +442,8 @@ class UtangePosApi(http.Controller):
         }
         if emp:
             data['employee_id'] = emp.id
+        if staff:
+            data.update({'utange_staff_id': staff.id, 'utange_staff_reason': (staff_reason or '').strip()[:200]})
         if table_order:
             data.update({'server_id': table_order.id, 'table_id': table_order.table_id.id or False,
                          'customer_count': table_order.customer_count or 1,

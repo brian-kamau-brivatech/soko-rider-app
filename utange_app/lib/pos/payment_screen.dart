@@ -45,15 +45,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
   String _customerName = '';
   List<Map<String, dynamic>> _found = const [];
   Timer? _debounce;
-  // Employee bill: the sale is charged to a member of staff (e.g. the soda missing at opening, to whoever closed last)
-  bool _staffMode = false;
+  // Staff bills: the sale is charged to an employee (e.g. the soda missing at opening, to whoever closed last)
+  bool get _staffMode => _method.staff;
   List<Map<String, dynamic>>? _staff;
   Map<String, dynamic>? _lastCloser;
   int? _staffId;
   String _staffName = '';
   final _staffReason = TextEditingController();
   String _staffQ = '';
-  bool get _hasAccount => widget.setup.methods.any((m) => m.account);
 
   double get _total => double.parse(widget.lines.fold<double>(0, (a, l) => a + l.total).toStringAsFixed(2));
   double get _tendered => double.tryParse(_cash.text.trim()) ?? 0;
@@ -84,7 +83,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   bool get _ready {
-    if (_staffMode) return _staffId != null;
+    if (_staffMode) return _staffId != null && _staffReason.text.trim().length >= 3;
     if (_method.cash) return _tendered + 0.001 >= _total;
     if (_method.account) return _customerId != null;
     return true;
@@ -185,31 +184,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
           for (final m in widget.setup.methods)
             ChoiceChip(
               label: Text(m.name),
-              selected: !_staffMode && _method.id == m.id,
-              onSelected: (_) => setState(() {
-                _method = m;
-                _staffMode = false;
-              }),
+              selected: _method.id == m.id,
+              onSelected: (_) {
+                setState(() => _method = m);
+                if (m.staff && _staff == null) _loadStaff();
+              },
               selectedColor: C.green,
               showCheckmark: false,
-              labelStyle: h(14, w: FontWeight.w700, color: !_staffMode && _method.id == m.id ? Colors.white : C.ink),
+              labelStyle: h(14, w: FontWeight.w700, color: _method.id == m.id ? Colors.white : C.ink),
               backgroundColor: Colors.white,
-              side: BorderSide(color: !_staffMode && _method.id == m.id ? C.green : C.line),
-            ),
-          if (_hasAccount)
-            ChoiceChip(
-              avatar: Icon(Icons.badge_rounded, size: 18, color: _staffMode ? Colors.white : C.navy),
-              label: const Text('Employee bill'),
-              selected: _staffMode,
-              onSelected: (_) {
-                setState(() => _staffMode = true);
-                if (_staff == null) _loadStaff();
-              },
-              selectedColor: C.navy,
-              showCheckmark: false,
-              labelStyle: h(14, w: FontWeight.w700, color: _staffMode ? Colors.white : C.ink),
-              backgroundColor: Colors.white,
-              side: BorderSide(color: _staffMode ? C.navy : C.line),
+              side: BorderSide(color: _method.id == m.id ? C.green : C.line),
             ),
         ]),
         const SizedBox(height: 14),
@@ -277,12 +261,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
       padding: const EdgeInsets.all(14),
       decoration: card(),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        const Text('Charged to a member of staff (credit). It shows in Employees bills until a manager clears it.',
+        const Text('Charged to an employee (credit). It shows in the Employees bills report until a manager clears it.',
             style: TextStyle(color: C.muted, fontSize: 12.5)),
         const SizedBox(height: 8),
         if (all == null)
           const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator(color: C.green)))
         else ...[
+          if (_staffId != null && q.isEmpty && !shown.any((e) => ii(e['id']) == _staffId) && ii(last?['id']) != _staffId)
+            pick({'id': _staffId, 'name': _staffName}),
           if (last != null && q.isEmpty) pick(last, hint: 'Closed the last shift'),
           TextField(
             onChanged: (v) => setState(() => _staffQ = v),
@@ -293,8 +279,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
         const SizedBox(height: 6),
         TextField(
           controller: _staffReason,
-          decoration: const InputDecoration(
-              labelText: 'Reason (optional)', hintText: 'e.g. 1 soda missing at opening', prefixIcon: Icon(Icons.notes_rounded)),
+          onChanged: (_) => setState(() {}),
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+              labelText: 'Note (shows in the report)',
+              hintText: 'e.g. 1 soda missing at opening',
+              errorText: _staffId != null && _staffReason.text.trim().length < 3 ? 'Write a note' : null,
+              prefixIcon: const Icon(Icons.notes_rounded)),
         ),
       ]),
     );

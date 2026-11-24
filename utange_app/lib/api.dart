@@ -161,12 +161,14 @@ class PayMethod {
   final bool cash;
   final bool mpesa;
   final bool account;
+  final bool staff; // "Staff bills": charged to an employee, with a note
   PayMethod.fromJson(Map<String, dynamic> j)
       : id = ii(j['id']),
         name = ss(j['name']),
         cash = j['cash'] == true,
         mpesa = j['mpesa'] == true,
-        account = j['account'] == true;
+        account = j['account'] == true,
+        staff = j['staff'] == true;
 }
 
 class PosSetup {

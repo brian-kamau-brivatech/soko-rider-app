@@ -7,6 +7,9 @@ import { ClosePosPopup } from "@point_of_sale/app/navbar/closing_popup/closing_p
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { ErrorPopup } from "@point_of_sale/app/errors/popups/error_popup";
 import { UtangeStockPopup } from "@utange_pos_connector/stock_popup";
+import { Order } from "@point_of_sale/app/store/models";
+import { SelectionPopup } from "@point_of_sale/app/utils/input_popups/selection_popup";
+import { TextAreaPopup } from "@point_of_sale/app/utils/input_popups/textarea_popup";
 
 function errText(e) {
     return (e && e.data && e.data.message) || (e && e.message) || String(e);
@@ -138,8 +141,93 @@ patch(PosStore.prototype, {
     },
 });
 
+// Staff bills: the employee and the note go with the order (Odoo checks them again when it saves the order).
+patch(Order.prototype, {
+    init_from_JSON(json) {
+        super.init_from_JSON(...arguments);
+        this.utange_staff_id = json.utange_staff_id || false;
+        this.utange_staff_reason = json.utange_staff_reason || "";
+    },
+    export_as_JSON() {
+        const json = super.export_as_JSON(...arguments);
+        json.utange_staff_id = this.utange_staff_id || false;
+        json.utange_staff_reason = this.utange_staff_reason || "";
+        return json;
+    },
+});
+
 patch(PaymentScreen.prototype, {
+    /** Paying with "Staff bills": pick the employee from the employees list and write a note (both required). */
+    async utangeStaffBill() {
+        const order = this.currentOrder;
+        const used = this.paymentLines.some((l) => l.payment_method.utange_staff);
+        if (!used) {
+            order.utange_staff_id = false;
+            order.utange_staff_reason = "";
+            return true;
+        }
+        let staff;
+        try {
+            staff = await this.pos.orm.call("pos.config", "utange_staff_list", [this.pos.config.id]);
+        } catch (e) {
+            await this.popup.add(ErrorPopup, {
+                title: _t("Staff bills"),
+                body: _t("Staff bills need the connection to Odoo (to list the employees). ") + errText(e),
+            });
+            return false;
+        }
+        if (!staff.length) {
+            await this.popup.add(ErrorPopup, { title: _t("Staff bills"), body: _t("There are no employees in Odoo.") });
+            return false;
+        }
+        const { confirmed, payload: empId } = await this.popup.add(SelectionPopup, {
+            title: _t("Staff bills: who is charged?"),
+            list: staff.map((e) => ({
+                id: e.id,
+                item: e.id,
+                label: e.name + (e.last_closer ? _t("  (closed the last shift)") : e.job ? "  ·  " + e.job : ""),
+                isSelected: e.id === order.utange_staff_id,
+            })),
+        });
+        if (!confirmed || !empId) {
+            return false;
+        }
+        let note = order.utange_staff_reason || "";
+        for (;;) {
+            const res = await this.popup.add(TextAreaPopup, {
+                title: _t("Staff bills: note (shows in the Employees bills report)"),
+                startingValue: note,
+                body: _t("e.g. 1 soda missing at opening"),
+                confirmText: _t("Save"),
+            });
+            if (!res.confirmed) {
+                return false;
+            }
+            note = (res.payload || "").trim();
+            if (note.length >= 3) {
+                break;
+            }
+            await this.popup.add(ErrorPopup, { title: _t("Staff bills"), body: _t("Write a note (at least 3 letters).") });
+        }
+        const partnerId = await this.pos.orm.call("pos.config", "utange_staff_partner", [this.pos.config.id, empId]);
+        if (partnerId) {
+            if (!this.pos.db.get_partner_by_id(partnerId)) {
+                await this.pos._loadPartners([partnerId]);
+            }
+            const partner = this.pos.db.get_partner_by_id(partnerId);
+            if (partner) {
+                order.set_partner(partner);
+            }
+        }
+        order.utange_staff_id = empId;
+        order.utange_staff_reason = note;
+        return true;
+    },
     async _isOrderValid(isForceValidate) {
+        // before Odoo's own "customer required" check: Staff bills only take an employee
+        if (!(await this.utangeStaffBill())) {
+            return false;
+        }
         if (!(await super._isOrderValid(...arguments))) {
             return false;
         }

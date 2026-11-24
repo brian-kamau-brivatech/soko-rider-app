@@ -41,6 +41,15 @@ class ProductTemplate(models.Model):
         return False
 
 
+class PosPaymentMethod(models.Model):
+    _inherit = 'pos.payment.method'
+
+    utange_staff = fields.Boolean(
+        'Staff bills (employees only)',
+        help='Utange handheld: this credit method charges a sale to an employee (chosen from the employees list, '
+             'with a note). The sales show in Employees bills.')
+
+
 class PosConfig(models.Model):
     _inherit = 'pos.config'
 
@@ -254,6 +263,41 @@ class PosConfig(models.Model):
             return not (self._utange_is_manager(employee=employee) or employee.sudo().utange_approver)
         user = user or self.env.user
         return not (self._utange_is_manager(user=user) or user._utange_can_approve())
+
+    def _utange_staff_method(self, create=True):
+        """The "Staff bills" payment method of this POS (a Customer Account type method for employees),
+        made and added to the POS when missing."""
+        self.ensure_one()
+        Method = self.env['pos.payment.method'].sudo()
+        pm = self.payment_method_ids.filtered('utange_staff')[:1]
+        if pm or not create:
+            return pm
+        pm = Method.search([('utange_staff', '=', True), ('company_id', '=', self.company_id.id)], limit=1) \
+            or Method.search([('name', '=ilike', 'staff bills'), ('journal_id', '=', False),
+                              ('company_id', '=', self.company_id.id)], limit=1)
+        if pm:
+            pm.write({'utange_staff': True})
+        else:
+            pm = Method.create({'name': 'Staff bills', 'company_id': self.company_id.id, 'split_transactions': True,
+                                'utange_staff': True})
+        # allowed while a session is open (Odoo blocks changing payment methods then, unless told it is safe)
+        self.sudo().with_context(bypass_payment_method_ids_forbidden_change=True).write(
+            {'payment_method_ids': [(4, pm.id)]})
+        return pm
+
+    def utange_staff_list(self):
+        """Odoo POS screen, Staff bills: the employees (the one who closed the last shift first)."""
+        self.ensure_one()
+        emps = self.env['hr.employee'].sudo().search([('company_id', 'in', (self.company_id.id, False))], order='name')
+        last = self.env['utange.stock.sheet'].sudo()._previous_closer(self)
+        if last:
+            emps = last | (emps - last)
+        return [{'id': e.id, 'name': e.name, 'job': e.job_title or '', 'last_closer': e == last} for e in emps]
+
+    def utange_staff_partner(self, employee_id):
+        """The employee's contact, as the POS loads partners (made when missing)."""
+        emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists()
+        return self.env['pos.order']._utange_staff_partner(emp).id if emp else False
 
     def _utange_update_at_closing(self):
         return (self.company_id.point_of_sale_update_stock_quantities or 'closing') == 'closing'

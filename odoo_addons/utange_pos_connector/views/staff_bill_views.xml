@@ -14,7 +14,7 @@
                 <field name="date_order"/>
                 <field name="utange_staff_id"/>
                 <field name="name"/>
-                <field name="utange_staff_reason"/>
+                <field name="utange_staff_reason" string="Note"/>
                 <field name="employee_id" string="Billed by" optional="show"/>
                 <field name="session_id" optional="hide"/>
                 <field name="amount_total" sum="Total"/>
@@ -56,7 +56,7 @@
         <field name="search_view_id" ref="view_pos_order_staff_bill_search"/>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">No employees bills</p>
-            <p>On the handheld: Charge &gt; Employee bill. The sale is charged to the employee (Customer Account on their contact).
+            <p>On the handheld: Charge &gt; Staff bills, choose the employee and write a note. The sale is charged to the employee (Customer Account on their contact).
                 Mark the bills cleared when the employee has paid or it was deducted.</p>
         </field>
     </record>
@@ -68,7 +68,7 @@
         <field name="arch" type="xml">
             <xpath expr="//field[@name='partner_id']" position="after">
                 <field name="utange_staff_id" invisible="not utange_staff_id"/>
-                <field name="utange_staff_reason" invisible="not utange_staff_id"/>
+                <field name="utange_staff_reason" string="Note" invisible="not utange_staff_id"/>
                 <field name="utange_staff_cleared" invisible="not utange_staff_id"/>
             </xpath>
         </field>
