@@ -15,14 +15,25 @@ echo 'H4sIAAAAAAAAA+3963Yb17UgCue3nqLMfAqAGCySkiXvhkR5K47T271jW8dSdkYPhgNdBIokIg
 chmod -R a+rX $ADDONS/utange_pos_connector $ADDONS/utange_brv_access
 ls $ADDONS/utange_pos_connector
 echo "== 3/5 install / update the module in $DB (1-3 min)"
+oc(){ docker exec -i $C sh -c 'C=/etc/odoo/odoo.conf; g(){ sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" $C | tail -1; }; H=$(g db_host); U=$(g db_user); P=$(g db_password); exec odoo "$@" -c $C --db_host="${H:-${HOST:-db}}" --db_user="${U:-${USER:-odoo}}" --db_password="${P:-${PASSWORD:-odoo}}"' odoo "$@"; }  # database login read from odoo.conf
 MODE=-i; docker exec $DBC psql -U odoo -d $DB -Atc "select state from ir_module_module where name='utange_pos_connector'" | grep -q installed && MODE=-u
-docker exec $C sh -c 'A=""; [ -n "$HOST" ] && A="$A --db_host=$HOST"; [ -n "$PORT" ] && A="$A --db_port=$PORT"; [ -n "$USER" ] && A="$A --db_user=$USER"; [ -n "$PASSWORD" ] && A="$A --db_password=$PASSWORD"; odoo -c /etc/odoo/odoo.conf $A -d '$DB' '$MODE' utange_pos_connector --stop-after-init --no-http --log-level=warn' 2>&1 | grep -v "^$" | tail -15
+oc -d $DB $MODE utange_pos_connector --max-cron-threads=0 --stop-after-init --no-http --log-level=warn </dev/null 2>&1 | grep -v "^$" | tail -15
 if docker exec $DBC psql -U odoo -d $DB -Atc "select state from ir_module_module where name='brv_user_access'" | grep -q installed; then
   echo "   BRV Access found: adding the Utange section to its tab"
   BM=-i; docker exec $DBC psql -U odoo -d $DB -Atc "select state from ir_module_module where name='utange_brv_access'" | grep -q installed && BM=-u
-  docker exec $C sh -c 'A=""; [ -n "$HOST" ] && A="$A --db_host=$HOST"; [ -n "$PORT" ] && A="$A --db_port=$PORT"; [ -n "$USER" ] && A="$A --db_user=$USER"; [ -n "$PASSWORD" ] && A="$A --db_password=$PASSWORD"; odoo -c /etc/odoo/odoo.conf $A -d '$DB' '$BM' utange_brv_access --stop-after-init --no-http --log-level=warn' 2>&1 | grep -v "^$" | tail -8
+  oc -d $DB $BM utange_brv_access --max-cron-threads=0 --stop-after-init --no-http --log-level=warn </dev/null 2>&1 | grep -v "^$" | tail -8
 fi
 docker exec $DBC psql -U odoo -d $DB -Atc "select name, state, latest_version from ir_module_module where name in ('utange_pos_connector','utange_brv_access')"
+WANT=$(sed -n "s/.*'version': '\([^']*\)'.*/\1/p" $ADDONS/utange_pos_connector/__manifest__.py)
+GOT=$(docker exec $DBC psql -U odoo -d $DB -Atc "select latest_version from ir_module_module where name='utange_pos_connector' and state='installed'")
+if [ "$GOT" != "$WANT" ]; then
+  echo "STOP: the module update did not finish (database has '$GOT', files are '$WANT'). Putting the old module back."
+  if [ -d /root/backups/utange_pos_connector_old_$TS ]; then rm -rf $ADDONS/utange_pos_connector; mv /root/backups/utange_pos_connector_old_$TS $ADDONS/utange_pos_connector; fi
+  if [ -d /root/backups/utange_brv_access_old_$TS ]; then rm -rf $ADDONS/utange_brv_access; mv /root/backups/utange_brv_access_old_$TS $ADDONS/utange_brv_access; fi
+  docker restart $C >/dev/null
+  echo "Old module restored and Odoo restarted. Send BRV the lines above."
+  exit 1
+fi
 echo "== Utange stock points (only where not set yet): main store B/REC/Stock, bar BAR/Stock, kitchen KTCHN/Stock"
 docker exec $DBC psql -U odoo -d $DB -qc "update pos_config set utange_store_location_id=coalesce(utange_store_location_id,(select id from stock_location where complete_name='B/REC/Stock' limit 1)), utange_bar_location_id=coalesce(utange_bar_location_id,(select id from stock_location where complete_name='BAR/Stock' limit 1)), utange_kitchen_location_id=coalesce(utange_kitchen_location_id,(select id from stock_location where complete_name='KTCHN/Stock' limit 1)) where active"
 docker exec $DBC psql -U odoo -d $DB -qc "update pos_category set utange_stock_point='bar' where utange_stock_point is null and upper(name->>'en_US') in ('SOFT DRINKS','SPIRITS','BRANDY','LIQUER','VODKA','WHISKEY','GIN','BEERS','CANS','COLD BEVERAGES')"

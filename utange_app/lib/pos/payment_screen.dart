@@ -23,8 +23,10 @@ class PaymentScreen extends StatefulWidget {
   final String label;
   /// The open table order in Odoo being paid (null for a direct sale).
   final int? orderId;
+  /// "FLOOR / TABLE" for the kitchen ticket (empty for a direct sale).
+  final String table;
   const PaymentScreen({super.key, required this.setup, required this.lines, Map<int, Map<int, double>>? sent, this.label = '',
-      this.orderId})
+      this.orderId, this.table = ''})
       : sent = sent ?? const {};
   @override
   State<PaymentScreen> createState() => _PaymentScreenState();
@@ -96,7 +98,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         // only what the Order button has not sent yet (nothing again if it was all sent)
         Receipt.printKitchenChanges(
           st: widget.setup,
-          order: widget.label.isEmpty ? sale.name : '${widget.label} · ${sale.name}',
+          order: widget.table.isNotEmpty ? (sale.ref.isEmpty ? sale.name : sale.ref) : (widget.label.isEmpty ? sale.name : '${widget.label} · ${sale.name}'),
+          table: widget.table,
           cashier: sale.cashier,
           cart: [for (final l in widget.lines) (l.product.id, l.qty, l.product.name, l.product.categIds)],
           sent: {for (final e in widget.sent.entries) e.key: Map<int, double>.from(e.value)},

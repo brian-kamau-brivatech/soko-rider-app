@@ -210,60 +210,60 @@ class Receipt {
   }
 
   /// Kitchen / bar order ticket (big print, no prices) for the Odoo preparation printers.
+  /// Kitchen / bar ticket in the same design as the Odoo 17 POS order printer ticket (point_of_sale.OrderChangeReceipt):
+  /// order name, FLOOR / TABLE, then CANCELLED hh:mm and NEW hh:mm with "qty   name" lines, 512 dots wide, 27 px text.
   static Future<Uint8List> ticket({required String printer, required String order, required String cashier,
-      required List<(double, String)> lines, List<(double, String)> cancelled = const [], String note = ''}) async {
-    const pad = 8.0;
-    const inner = width - pad * 2;
+      required List<(double, String)> lines, List<(double, String)> cancelled = const [], String note = '', String table = ''}) async {
+    const w = 512.0, base = 27.0, pad = 6.0, inner = w - pad * 2;
     final ops = <(double, void Function(Canvas, double))>[];
-    void gap(double h) => ops.add((h, (c, y) {}));
+    void br([double n = 1]) => ops.add((base * 1.25 * n, (c, y) {}));
     void center(String t, double size, {bool bold = false}) {
       final p = _tp(t, size, bold: bold, align: TextAlign.center, max: inner);
       ops.add((p.height, (c, y) => p.paint(c, Offset(pad + (inner - p.width) / 2, y))));
     }
-    void left(String t, double size, {bool bold = false}) {
-      final p = _tp(t, size, bold: bold, max: inner);
-      ops.add((p.height, (c, y) => p.paint(c, Offset(pad, y))));
+    void item(double q, String name) {
+      final qp = _tp(_q(q), base, max: inner / 3);
+      final np = _tp(name, base, max: inner - qp.width - 50);
+      final hh = (qp.height > np.height ? qp.height : np.height) + 10; // .multiprint-flex: margin-bottom 10px
+      ops.add((hh, (c, y) {
+        qp.paint(c, Offset(pad, y));
+        np.paint(c, Offset(pad + qp.width + 50, y)); // .product-quantity: margin-right 50px
+      }));
     }
-    void dashes() => ops.add((14.0, (c, y) {
-          final paint = Paint()
-            ..color = const Color(0xFF000000)
-            ..strokeWidth = 2;
-          for (var x = pad; x < width - pad; x += 10) {
-            c.drawLine(Offset(x, y + 7), Offset(x + 5, y + 7), paint);
-          }
-        }));
-    center(printer.toUpperCase(), 24, bold: true);
-    center(order, 30, bold: true);
     final now = DateTime.now();
-    center('${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} · $cashier', 20);
-    dashes();
-    for (final l in lines) {
-      left('${_q(l.$1)} x ${l.$2}', 30, bold: true);
-      gap(4);
+    final hm = '${now.hour}:${now.minute}'; // as Odoo prints it (no leading zeros)
+    center(order, base * 0.75); // .pos-receipt-order-data
+    if (table.isNotEmpty) {
+      br();
+      center(table, base * 1.25, bold: true); // .pos-receipt-title
     }
+    br(2);
     if (cancelled.isNotEmpty) {
-      if (lines.isNotEmpty) dashes();
-      center('*** CANCELLED ***', 26, bold: true);
+      center('CANCELLED $hm', base * 1.25, bold: true);
+      br(2);
       for (final l in cancelled) {
-        left('- ${_q(l.$1)} x ${l.$2}', 28, bold: true);
-        gap(4);
+        item(l.$1, l.$2);
       }
+      br(2);
     }
-    if (note.isNotEmpty) {
-      dashes();
-      left(note, 22);
+    if (lines.isNotEmpty) {
+      center('NEW $hm', base * 1.25, bold: true);
+      br(2);
+      for (final l in lines) {
+        item(l.$1, l.$2);
+      }
+      br(2);
     }
-    gap(40);
     final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
     final rec = ui.PictureRecorder();
-    final canvas = Canvas(rec, Rect.fromLTWH(0, 0, width, total));
-    canvas.drawRect(Rect.fromLTWH(0, 0, width, total), Paint()..color = const Color(0xFFFFFFFF));
+    final canvas = Canvas(rec, Rect.fromLTWH(0, 0, w, total));
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, total), Paint()..color = const Color(0xFFFFFFFF));
     var y = 0.0;
     for (final o in ops) {
       o.$2(canvas, y);
       y += o.$1;
     }
-    final img = await rec.endRecording().toImage(width.toInt(), total.toInt());
+    final img = await rec.endRecording().toImage(w.toInt(), total.toInt());
     return _blackAndWhite(img);
   }
 
@@ -295,7 +295,7 @@ class Receipt {
   /// Returns (printers that printed, printers that did not answer).
   static Future<(List<String>, List<String>)> printKitchenChanges({required PosSetup st, required String order,
       required String cashier, required List<(int, double, String, List<int>)> cart,
-      required Map<int, Map<int, double>> sent, String note = ''}) async {
+      required Map<int, Map<int, double>> sent, String note = '', String table = ''}) async {
     final done = <String>[], failed = <String>[];
     for (final pr in st.kitchenPrinters) {
       final mine = [for (final c in cart) if (pr.categIds.isEmpty || c.$4.any(pr.categIds.contains)) c];
@@ -313,7 +313,7 @@ class Receipt {
       }
       if (add.isEmpty && cancel.isEmpty) continue;
       try {
-        final png = await ticket(printer: pr.name, order: order, cashier: cashier, lines: add, cancelled: cancel, note: note);
+        final png = await ticket(printer: pr.name, order: order, cashier: cashier, lines: add, cancelled: cancel, note: note, table: table);
         if (await NetPrinter.send(pr.ip, pr.via, png)) {
           sent[pr.id] = Map<int, double>.from(now);
           done.add(pr.name);

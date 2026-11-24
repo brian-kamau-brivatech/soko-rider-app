@@ -32,6 +32,7 @@ class _SellScreenState extends State<SellScreen> {
   int? _floorId;
   Map<String, dynamic>? _table; // {id, name, floor}
   int? _orderId; // the open order of the table in Odoo
+  String _orderRef = ''; // its Odoo order name ("Order 00005-001-0003"), printed on the kitchen ticket like Odoo
   String _orderUid = '';
   final Map<int, String> _uuids = {}; // product -> Odoo order line uuid
   bool _dirty = false; // changed since last saved to Odoo
@@ -136,8 +137,15 @@ class _SellScreenState extends State<SellScreen> {
     setState(() => _sending = true);
     try {
       Receipt.rememberNames([for (final c in _cartForKitchen) (c.$1, c.$3)]);
+      // a new table order is saved first, so its Odoo order name prints on the ticket (like Odoo)
+      if (_table != null && _orderId == null && !await _saveTable(quiet: false)) return;
       final (done, failed) = await Receipt.printKitchenChanges(
-          st: st, order: _label, cashier: Store.i.cashierName, cart: _cartForKitchen, sent: _sent);
+          st: st,
+          order: _table != null && _orderRef.isNotEmpty ? _orderRef : _label,
+          table: _tableTitle,
+          cashier: Store.i.cashierName,
+          cart: _cartForKitchen,
+          sent: _sent);
       if (_table != null) await _saveTable(quiet: false); // the order and what was sent go to Odoo (shows on the floor plan)
       if (!mounted) return;
       if (failed.isEmpty) {
@@ -168,7 +176,12 @@ class _SellScreenState extends State<SellScreen> {
     setState(() => _cart.clear());
     if (wasSent && st != null) {
       final (_, failed) = await Receipt.printKitchenChanges(
-          st: st, order: _label, cashier: Store.i.cashierName, cart: const [], sent: _sent);
+          st: st,
+          order: _table != null && _orderRef.isNotEmpty ? _orderRef : _label,
+          table: _tableTitle,
+          cashier: Store.i.cashierName,
+          cart: const [],
+          sent: _sent);
       if (mounted) toast(context, failed.isEmpty ? 'Order cancelled at the kitchen / bar.' : 'Cancel ticket not printed on: ${failed.join(', ')}.');
     }
     if (_table != null && _orderId != null) {
@@ -182,6 +195,7 @@ class _SellScreenState extends State<SellScreen> {
     _sent.clear();
     _label = '';
     _orderId = null;
+    _orderRef = '';
     _orderUid = '';
     _uuids.clear();
     _dirty = false;
@@ -191,6 +205,7 @@ class _SellScreenState extends State<SellScreen> {
   // Tables
   // ------------------------------------------------------------------
   String get _tableLabel => _table == null ? '' : '${_table!['floor']} · Table ${_table!['name']}';
+  String get _tableTitle => _table == null ? '' : '${_table!['floor']} / ${_table!['name']}'; // as on Odoo's ticket
 
   Future<void> _loadTables() async {
     try {
@@ -259,6 +274,7 @@ class _SellScreenState extends State<SellScreen> {
   /// Load an open table order from Odoo into the sale (items, and what the kitchen / bar already has).
   void _takeOrder(Map<String, dynamic> o) {
     _orderId = ii(o['id']);
+    _orderRef = ss(o['ref']);
     for (final l in ll(o['lines'])) {
       final pid = ii(l['product_id']);
       _cart[pid] = (_cart[pid] ?? 0) + dd(l['qty']);
@@ -309,6 +325,7 @@ class _SellScreenState extends State<SellScreen> {
       final o = r['order'];
       if (o is Map) {
         _orderId = ii(o['id']);
+        _orderRef = ss(o['ref']);
         for (final l in ll(o['lines'])) {
           if (ss(l['uuid']).isNotEmpty) _uuids[ii(l['product_id'])] = ss(l['uuid']);
         }
@@ -590,6 +607,7 @@ class _SellScreenState extends State<SellScreen> {
         sent: _sent,
         label: _label,
         orderId: _table != null ? _orderId : null,
+        table: _tableTitle,
       ),
     ));
     if (sold == true && mounted) {
