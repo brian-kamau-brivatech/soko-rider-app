@@ -81,6 +81,7 @@ jobs:
         env:
           BRV_KEYSTORE_BASE64: ${{ secrets.BRV_KEYSTORE_BASE64 }}
           BRV_KEYSTORE_PASSWORD: ${{ secrets.BRV_KEYSTORE_PASSWORD }}
+        # key and password come from the GitHub secrets; see .github/scripts/fixed_signing.py
         run: python3 ../.github/scripts/fixed_signing.py
 
       - run: flutter pub get

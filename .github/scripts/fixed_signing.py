@@ -17,8 +17,9 @@ ks = pathlib.Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'brv-signing.p12'
 ks.write_bytes(base64.b64decode(''.join(b64.split())))
 env_file = os.environ.get('GITHUB_ENV')
 if env_file:
-    with open(env_file, 'a') as f:
+    with open(env_file, 'a') as f:  # for the Gradle build in the later steps (GitHub hides the secret in logs)
         f.write('BRV_KEYSTORE_PATH=%s\n' % ks)
+        f.write('BRV_KEYSTORE_PASSWORD=%s\n' % pw)
 
 kts = pathlib.Path('android/app/build.gradle.kts')
 groovy = pathlib.Path('android/app/build.gradle')
