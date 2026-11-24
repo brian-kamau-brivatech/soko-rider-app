@@ -298,7 +298,8 @@ class _CartScreenState extends State<CartScreen> {
           ListTile(title: Text(l.name, style: h(17))),
           ListTile(leading: const Icon(Icons.numbers), title: const Text('Quantity'), onTap: () => Navigator.pop(ctx, 'qty')),
           if (ses.can(P.discount)) ListTile(leading: const Icon(Icons.percent), title: const Text('Discount'), onTap: () => Navigator.pop(ctx, 'disc')),
-          if (ses.can(P.priceChange)) ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Change price'), onTap: () => Navigator.pop(ctx, 'price')),
+          if (ses.can(P.priceChange) || Settings.i.allowPriceEdit)
+            ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Change price'), subtitle: Text('Now ${money(l.price)} each'), onTap: () => Navigator.pop(ctx, 'price')),
           ListTile(leading: const Icon(Icons.delete_outline, color: C.red), title: const Text('Remove'), onTap: () => Navigator.pop(ctx, 'del')),
         ]),
       ),
@@ -323,9 +324,13 @@ class _CartScreenState extends State<CartScreen> {
       }
       case 'price': {
         final v = numIn(await ask(context, 'Price of ${l.name}', number: true, initial: money(l.price, symbol: false)));
-        if (v != null && v >= 0) {
+        if (v != null && v >= 0 && v != l.price) {
+          final old = l.price;
           l.price = v;
           Cart.i.changed();
+          // kept in the audit log (who changed which price, from what to what)
+          final db = await Db.get();
+          await db.transaction((tx) => Db.audit(tx, ses.userId, 'price_change', '${l.name}: ${money(old, symbol: false)} -> ${money(v, symbol: false)}'));
         }
       }
       case 'del': {

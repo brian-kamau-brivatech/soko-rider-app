@@ -11,7 +11,7 @@ class Db {
   static Future<Database> get() async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, fileName), version: 4, onCreate: (db, v) async {
+    _db = await openDatabase(p.join(dir, fileName), version: 5, onCreate: (db, v) async {
       await _schema(db);
       await _etrSchema(db);
       await _syncSchema(db);
@@ -35,6 +35,7 @@ class Db {
         await _kvTriggers(db);
       }
       if (oldV < 4) await _kvTriggers(db); // tax group D (Non-VAT): its general reference is shared too
+      if (oldV < 5) await _kvTriggers(db); // 'allow price change during sales' is shared with every device
     }, onConfigure: (db) async {
       await db.execute('PRAGMA foreign_keys = OFF');
     });
@@ -204,7 +205,7 @@ class Db {
   /// Business settings shared by all devices (printer, paper, selling location stay per device).
   static const sharedKeys = [
     'business_name', 'phone', 'address', 'email', 'tax_pin', 'receipt_header', 'receipt_footer', 'vat_registered',
-    'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash', 'receipt_logo',
+    'require_shift', 'block_no_stock', 'lock_minutes', 'recovery_hash', 'receipt_logo', 'allow_price_edit',
     'vat_ref_mode', 'vat_gen_A', 'vat_gen_B', 'vat_gen_C', 'vat_gen_D', 'vat_gen_E',
   ];
 

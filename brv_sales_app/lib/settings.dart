@@ -42,6 +42,8 @@ class Settings extends ChangeNotifier {
   bool get requireShift => isSalesApp || flag('require_shift', true); // sales devices always sell inside a session
   bool get blockNoStock => flag('block_no_stock', true);
   bool get printAfterSale => flag('print_after_sale', true);
+  /// Tick box: anyone selling may change an item's price in the cart (otherwise only roles with "Change the price on a sale").
+  bool get allowPriceEdit => flag('allow_price_edit', false);
   int get paperMm => numVal('paper_mm', 58).toInt();
   /// Minutes without a touch before the app locks (0 = never).
   int get lockMinutes => numVal('lock_minutes', 2).toInt();

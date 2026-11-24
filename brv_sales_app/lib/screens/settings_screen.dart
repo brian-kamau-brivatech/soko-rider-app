@@ -136,6 +136,12 @@ class _BusinessSettingsState extends State<BusinessSettings> {
               SwitchListTile(value: st.requireShift, onChanged: (v) => st.setFlag('require_shift', v), title: const Text('Session needed to sell'), subtitle: const Text('A session is opened with a cash float and closed with a cash count. Always on for BRV Pos Sales devices.')),
               SwitchListTile(value: st.blockNoStock, onChanged: (v) => st.setFlag('block_no_stock', v), title: const Text('Do not sell without stock'), subtitle: const Text('Unless the role has "Sell items that show no stock".')),
               SwitchListTile(value: st.printAfterSale, onChanged: (v) => st.setFlag('print_after_sale', v), title: const Text('Print the receipt after each sale')),
+              SwitchListTile(
+                value: st.allowPriceEdit,
+                onChanged: (v) => st.setFlag('allow_price_edit', v),
+                title: const Text('Allow price change during sales'),
+                subtitle: const Text('Anyone selling can change an item\'s price on the sale (tap the item in the cart). Off: only roles with "Change the price on a sale".'),
+              ),
               ListTile(
                 title: const Text('Lock after no touch'),
                 subtitle: Text(st.lockMinutes == 0 ? 'Never' : '${st.lockMinutes} minutes'),
