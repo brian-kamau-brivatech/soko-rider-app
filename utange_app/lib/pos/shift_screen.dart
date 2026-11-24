@@ -41,6 +41,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
     try {
       final r = await Api.call('/utange/pos/session', Store.i.base());
       final i = SessionInfo.fromJson(Map<String, dynamic>.from(r['info'] as Map));
+      await Store.i.setPerms(i.perms);
       if (!mounted) return;
       setState(() {
         _info = i;
@@ -288,6 +289,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
           Text(
             i.requireSheet && i.sheetReady.isNotEmpty
                 ? 'Opening stock already counted in Odoo (${i.sheetReady}). Enter the cash in the drawer and open.'
+                : i.requireSheet && i.countsLocked
+                ? '1. Enter the cash in the drawer.  2. Check the stock sheet (as the system shows it - only a manager changes counts).  3. Confirm.'
                 : i.requireSheet
                 ? '1. Enter the cash in the drawer.  2. Count every item on the stock sheet.  3. Confirm.'
                 : 'Count the cash in the drawer.',
@@ -375,8 +378,10 @@ class _ShiftScreenState extends State<ShiftScreen> {
         ]),
       ),
       const SizedBox(height: 12),
+      if (c.byUser.isNotEmpty) ...[_usersCard(c), const SizedBox(height: 12)],
       if (c.drafts.isNotEmpty)
-        _warn('Unpaid POS orders are still open: ${c.drafts.join(', ')}. Pay or cancel them in Odoo POS before closing.', C.red, C.redLight),
+        _warn('Bills not cleared: ${c.byUser.where((u) => !u.cleared).map((u) => '${u.name} (${u.openCount}, ${ksh(u.openAmount)})').join(', ')}. '
+            'They must be paid (or cancelled) before the shift closes.', C.red, C.redLight),
       if (!i.canClose)
         _warn('${i.cashierName} is a cashier. Only a POS manager can close the shift: sign in as a manager (More > Switch cashier).',
             C.amber, C.amberLight),
@@ -420,6 +425,39 @@ class _ShiftScreenState extends State<ShiftScreen> {
       ),
     ]);
   }
+
+  /// Who worked this shift: their sales, and whether all their bills are paid (cleared) or some are still open.
+  Widget _usersCard(SessionClosing c) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: card(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Staff in this shift', style: h(17)),
+          const SizedBox(height: 6),
+          for (final u in c.byUser)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(u.name, style: h(14.5, w: FontWeight.w700)),
+                    Text(
+                        [
+                          '${u.orders} paid · ${ksh(u.sales)}',
+                          if (u.staffBills > 0) 'employee bills ${ksh(u.staffBills)}',
+                        ].join(' · '),
+                        style: const TextStyle(color: C.muted, fontSize: 12.5)),
+                    if (!u.cleared)
+                      Text('Open: ${u.open.join(', ')}', style: const TextStyle(color: C.red, fontSize: 12.5)),
+                  ]),
+                ),
+                const SizedBox(width: 8),
+                u.cleared
+                    ? const Pill('Cleared')
+                    : Pill('${u.openCount} open · ${ksh(u.openAmount)}', fg: C.red, bg: C.redLight),
+              ]),
+            ),
+        ]),
+      );
 
   Widget _warn(String text, Color fg, Color bg) => Container(
         margin: const EdgeInsets.only(bottom: 12),

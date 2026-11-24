@@ -9,7 +9,13 @@
             <!-- ========== count ========== -->
             <t t-if="state.stage === 'count'">
                 <div class="px-3 pt-2 pb-1 border-bottom">
-                    <div class="text-muted small mb-2">
+                    <div t-if="props.locked" class="alert alert-info py-2 mb-2">
+                        Only a manager can change the counts. Confirm the figures as shown.
+                        <t t-if="isOpen">If something is missing on the shelf, sell it after opening as an
+                            <b>Employee bill</b><t t-if="props.previousCloser"> to <b t-esc="props.previousCloser"/></t>
+                            (the person who closed the last shift).</t>
+                    </div>
+                    <div class="text-muted small mb-2" t-else="">
                         <t t-if="isOpen">"Odoo" is what Odoo has now. If the shelf has a different number, type the real one.</t>
                         <t t-else="">Balance = Opening + In − Out − Sold (In/Out = requisitions and transfers during the shift).
                             Type what is really remaining.</t>
@@ -66,7 +72,8 @@
                                     <td class="text-end fw-bold" t-esc="fmt(r.ref)"/>
                                 </t>
                                 <td>
-                                    <div class="input-group input-group-sm">
+                                    <div t-if="props.locked" class="text-center fw-bold" t-esc="r.counted"/>
+                                    <div t-else="" class="input-group input-group-sm">
                                         <button class="btn btn-outline-secondary" t-on-click="() => this.step(r, -1)">−</button>
                                         <input class="form-control text-center fw-bold" inputmode="decimal" t-model="r.counted"
                                                t-att-class="num(r.counted) === null ? 'is-invalid' : ''"/>

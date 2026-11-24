@@ -68,7 +68,7 @@ class Receipt {
   }
 
   /// Builds the receipt image as PNG bytes.
-  static Future<Uint8List> image(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = '', String vat = '', String address = ''}) async {
+  static Future<Uint8List> image(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = '', String vat = '', String address = '', bool bill = false}) async {
     const pad = 8.0;
     const inner = width - pad * 2;
     final ops = <(double, void Function(Canvas, double))>[];
@@ -122,31 +122,39 @@ class Receipt {
     if (header.isNotEmpty) center(header, 19);
     center('Served by ${s.cashier}', 19);
     gap(4);
+    if (bill) center('BILL', 30, bold: true);
+    if (s.staff.isNotEmpty) center('EMPLOYEE BILL', 26, bold: true);
     center(s.name, 25, bold: true);
     dashes();
     for (final l in s.lines) {
       row(l.name, _m(l.total), 22, boldLeft: true);
       left('   ${_q(l.qty)} x ${_m(l.price)}', 19);
+      if (l.note.isNotEmpty) left('   * ${l.note}', 19);
       gap(3);
     }
     dashes();
-    row('TOTAL', 'KSh ${_m(s.amount)}', 28, bold: true);
+    row(bill ? 'TOTAL TO PAY' : 'TOTAL', 'KSh ${_m(s.amount)}', 28, bold: true);
     if (s.tax > 0) row('of which tax', _m(s.tax), 19);
     for (final p in s.payments.where((p) => p.amount > 0)) {
       row(p.method, _m(p.amount), 21);
       if (p.ref.isNotEmpty) left('   Ref: ${p.ref}', 19);
     }
     if (s.change > 0) row('CHANGE', _m(s.change), 23, bold: true);
-    if (s.customer.isNotEmpty) {
+    if (s.staff.isNotEmpty) {
+      gap(4);
+      left('Charged to employee: ${s.staff}', 21);
+      gap(30);
+      left('Signature: ______________________', 20);
+    } else if (s.customer.isNotEmpty) {
       gap(4);
       left('Customer: ${s.customer}', 20);
     }
     dashes();
-    if (footer.isNotEmpty) center(footer, 19);
-    center(s.ref, 19);
+    if (footer.isNotEmpty && !bill) center(footer, 19);
+    if (s.ref.isNotEmpty) center(s.ref, 19);
     center(s.date, 19);
     gap(4);
-    center('Thank you!', 24, bold: true);
+    center(bill ? 'This is not a receipt' : 'Thank you!', bill ? 21 : 24, bold: true);
     gap(70); // room to tear the paper
 
     final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
@@ -182,9 +190,9 @@ class Receipt {
   // ---------------------------------------------------------------------------
   // Printing
   // ---------------------------------------------------------------------------
-  static Future<bool> print(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = '', String vat = '', String address = ''}) async {
+  static Future<bool> print(Sale s, {String shop = '', String phone = '', String email = '', String header = '', String footer = '', String vat = '', String address = '', bool bill = false}) async {
     try {
-      final png = await image(s, shop: shop, phone: phone, email: email, header: header, footer: footer, vat: vat, address: address);
+      final png = await image(s, shop: shop, phone: phone, email: email, header: header, footer: footer, vat: vat, address: address, bill: bill);
       final choice = await printerChoice();
       if (choice.startsWith('odoo:')) {
         final ok = await NetPrinter.viaOdoo(choice.substring(5), png);
@@ -209,11 +217,12 @@ class Receipt {
     }
   }
 
-  /// Kitchen / bar order ticket (big print, no prices) for the Odoo preparation printers.
-  /// Kitchen / bar ticket in the same design as the Odoo 17 POS order printer ticket (point_of_sale.OrderChangeReceipt):
-  /// order name, FLOOR / TABLE, then CANCELLED hh:mm and NEW hh:mm with "qty   name" lines, 512 dots wide, 27 px text.
+  /// Kitchen / bar (captain) ticket in the same design as the Odoo 17 POS order printer ticket
+  /// (point_of_sale.OrderChangeReceipt): order name, FLOOR / TABLE, then CANCELLED hh:mm and NEW hh:mm with
+  /// "qty   name" lines, 512 dots wide, 27 px text - plus each line's price, the internal note under the item,
+  /// and the total of the new items.
   static Future<Uint8List> ticket({required String printer, required String order, required String cashier,
-      required List<(double, String)> lines, List<(double, String)> cancelled = const [], String note = '', String table = ''}) async {
+      required List<TicketLine> lines, List<TicketLine> cancelled = const [], String note = '', String table = ''}) async {
     const w = 512.0, base = 27.0, pad = 6.0, inner = w - pad * 2;
     final ops = <(double, void Function(Canvas, double))>[];
     void br([double n = 1]) => ops.add((base * 1.25 * n, (c, y) {}));
@@ -221,13 +230,27 @@ class Receipt {
       final p = _tp(t, size, bold: bold, align: TextAlign.center, max: inner);
       ops.add((p.height, (c, y) => p.paint(c, Offset(pad + (inner - p.width) / 2, y))));
     }
-    void item(double q, String name) {
-      final qp = _tp(_q(q), base, max: inner / 3);
-      final np = _tp(name, base, max: inner - qp.width - 50);
-      final hh = (qp.height > np.height ? qp.height : np.height) + 10; // .multiprint-flex: margin-bottom 10px
+    void item(TicketLine l) {
+      final qp = _tp(_q(l.qty), base, max: inner / 3);
+      final pp = _tp(l.price > 0 ? _m(l.qty * l.price) : '', base * 0.85, max: inner / 3);
+      final np = _tp(l.name, base, max: inner - qp.width - 50 - pp.width - 10);
+      final hh = (qp.height > np.height ? qp.height : np.height) + (l.note.isEmpty ? 10 : 2); // .multiprint-flex: margin-bottom 10px
       ops.add((hh, (c, y) {
         qp.paint(c, Offset(pad, y));
         np.paint(c, Offset(pad + qp.width + 50, y)); // .product-quantity: margin-right 50px
+        pp.paint(c, Offset(w - pad - pp.width, y + 2));
+      }));
+      if (l.note.isNotEmpty) {
+        final xp = _tp(l.note, base * 0.85, bold: true, max: inner - qp.width - 50); // the internal note, under the item
+        ops.add((xp.height + 10, (c, y) => xp.paint(c, Offset(pad + qp.width + 50, y))));
+      }
+    }
+    void totalRow(String label, double v) {
+      final lp = _tp(label, base, bold: true);
+      final vp = _tp('KSh ${_m(v)}', base, bold: true);
+      ops.add((lp.height + 6, (c, y) {
+        lp.paint(c, Offset(pad, y));
+        vp.paint(c, Offset(w - pad - vp.width, y));
       }));
     }
     final now = DateTime.now();
@@ -242,7 +265,7 @@ class Receipt {
       center('CANCELLED $hm', base * 1.25, bold: true);
       br(2);
       for (final l in cancelled) {
-        item(l.$1, l.$2);
+        item(l);
       }
       br(2);
     }
@@ -250,10 +273,18 @@ class Receipt {
       center('NEW $hm', base * 1.25, bold: true);
       br(2);
       for (final l in lines) {
-        item(l.$1, l.$2);
+        item(l);
+      }
+      final sum = lines.fold<double>(0, (a, l) => a + l.qty * l.price);
+      if (sum > 0) {
+        ops.add((12.0, (c, y) => c.drawLine(Offset(pad, y + 6), Offset(w - pad, y + 6), Paint()..strokeWidth = 2)));
+        totalRow('Total', sum);
       }
       br(2);
     }
+    if (cashier.isNotEmpty) center('By $cashier', base * 0.75);
+    if (note.isNotEmpty) center(note, base * 0.75);
+    if (cashier.isNotEmpty || note.isNotEmpty) br();
     final total = ops.fold<double>(0, (a, o) => a + o.$1).ceil().toDouble();
     final rec = ui.PictureRecorder();
     final canvas = Canvas(rec, Rect.fromLTWH(0, 0, w, total));
@@ -272,9 +303,9 @@ class Receipt {
   static Future<List<String>> printKitchen(Sale s, PosSetup st, List<(double, String, List<int>)> cart) async {
     final failed = <String>[];
     for (final pr in st.kitchenPrinters) {
-      final lines = <(double, String)>[
+      final lines = <TicketLine>[
         for (final c in cart)
-          if (pr.categIds.isEmpty || c.$3.any(pr.categIds.contains)) (c.$1, c.$2),
+          if (pr.categIds.isEmpty || c.$3.any(pr.categIds.contains)) TicketLine(c.$1, c.$2),
       ];
       if (lines.isEmpty) continue;
       try {
@@ -293,8 +324,9 @@ class Receipt {
   /// [sent] remembers, per printer id, the quantities already on its tickets; it is updated only for the
   /// printers that printed, so pressing again re-sends just to the ones that failed.
   /// Returns (printers that printed, printers that did not answer).
+  /// [cart]: (product id, qty, name, POS category ids, unit price, internal note).
   static Future<(List<String>, List<String>)> printKitchenChanges({required PosSetup st, required String order,
-      required String cashier, required List<(int, double, String, List<int>)> cart,
+      required String cashier, required List<(int, double, String, List<int>, double, String)> cart,
       required Map<int, Map<int, double>> sent, String note = '', String table = ''}) async {
     final done = <String>[], failed = <String>[];
     for (final pr in st.kitchenPrinters) {
@@ -302,14 +334,14 @@ class Receipt {
       final before = sent[pr.id] ?? const <int, double>{};
       final names = {for (final c in mine) c.$1: c.$3};
       final now = {for (final c in mine) c.$1: c.$2};
-      final add = <(double, String)>[], cancel = <(double, String)>[];
+      final add = <TicketLine>[], cancel = <TicketLine>[];
       for (final c in mine) {
         final d = c.$2 - (before[c.$1] ?? 0);
-        if (d > 0.0001) add.add((d, c.$3));
-        if (d < -0.0001) cancel.add((-d, c.$3));
+        if (d > 0.0001) add.add(TicketLine(d, c.$3, price: c.$5, note: c.$6));
+        if (d < -0.0001) cancel.add(TicketLine(-d, c.$3, note: c.$6));
       }
       for (final e in before.entries) {
-        if (!now.containsKey(e.key) && e.value > 0.0001) cancel.add((e.value, _names[e.key] ?? names[e.key] ?? 'Item'));
+        if (!now.containsKey(e.key) && e.value > 0.0001) cancel.add(TicketLine(e.value, _names[e.key] ?? names[e.key] ?? 'Item'));
       }
       if (add.isEmpty && cancel.isEmpty) continue;
       try {
@@ -337,28 +369,43 @@ class Receipt {
 
   /// The bill: on the Odoo bill printer when the POS has one (pos_escpos) and the handheld is on "Automatic",
   /// otherwise on the printer chosen in Settings.
-  static Future<bool> printSale(Sale s, PosSetup? st) async {
+  static Future<bool> printSale(Sale s, PosSetup? st, {bool bill = false}) async {
     final choice = await printerChoice();
     if (choice == 'auto' && st != null && st.receiptPrinterIp.isNotEmpty) {
       try {
         final png = await image(s, shop: st.shopName, phone: st.shopPhone, email: st.shopEmail, header: st.header,
-            footer: st.footer, vat: st.shopVat, address: st.shopAddress);
+            footer: st.footer, vat: st.shopVat, address: st.shopAddress, bill: bill);
         final ok = await NetPrinter.send(st.receiptPrinterIp, st.receiptPrinterVia, png);
         lastMethod = ok ? 'network' : 'net_failed';
         if (ok) return true;
       } catch (_) {}
     }
-    return _printSaleHere(s, st);
+    return _printSaleHere(s, st, bill: bill);
   }
 
-  static Future<bool> _printSaleHere(Sale s, PosSetup? st) => print(s,
+  /// The bill (before payment), like Odoo's "Bill" button: the items and the total to pay, marked BILL.
+  static Future<bool> printBill({required PosSetup st, required String title, required String cashier,
+      required List<(String, double, double, String)> lines}) {
+    final now = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final total = lines.fold<double>(0, (a, l) => a + l.$2 * l.$3);
+    final sale = Sale.fromJson({
+      'id': 0, 'name': title, 'ref': '', 'cashier': cashier, 'amount': total,
+      'date': '${now.year}-${two(now.month)}-${two(now.day)} ${two(now.hour)}:${two(now.minute)}',
+      'lines': [for (final l in lines) {'name': l.$1, 'qty': l.$2, 'price': l.$3, 'total': l.$2 * l.$3, 'note': l.$4}],
+    });
+    return printSale(sale, st, bill: true);
+  }
+
+  static Future<bool> _printSaleHere(Sale s, PosSetup? st, {bool bill = false}) => print(s,
       shop: st?.shopName ?? Store.i.companyName,
       phone: st?.shopPhone ?? '',
       email: st?.shopEmail ?? '',
       header: st?.header ?? '',
       footer: st?.footer ?? '',
       vat: st?.shopVat ?? '',
-      address: st?.shopAddress ?? '');
+      address: st?.shopAddress ?? '',
+      bill: bill);
 
   /// What printer services this handheld has (Settings > Printer check).
   static Future<Map<String, dynamic>> printerInfo() async {
@@ -369,4 +416,13 @@ class Receipt {
       return {'error': '$e'};
     }
   }
+}
+
+/// One line of a kitchen / bar ticket.
+class TicketLine {
+  final double qty;
+  final String name;
+  final double price; // unit price incl. tax (0 = not shown)
+  final String note; // the waiter's internal note
+  const TicketLine(this.qty, this.name, {this.price = 0, this.note = ''});
 }

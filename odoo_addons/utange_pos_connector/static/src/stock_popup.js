@@ -12,7 +12,7 @@ import { useService } from "@web/core/utils/hooks";
  */
 export class UtangeStockPopup extends AbstractAwaitablePopup {
     static template = "utange_pos_connector.UtangeStockPopup";
-    static defaultProps = { cancelKey: false, confirmKey: false, canCancel: true, corrects: false, isManager: false };
+    static defaultProps = { cancelKey: false, confirmKey: false, canCancel: true, corrects: false, isManager: false, locked: false, previousCloser: "" };
 
     setup() {
         super.setup();
@@ -75,6 +75,9 @@ export class UtangeStockPopup extends AbstractAwaitablePopup {
         return this.state.rows.every((r) => this.num(r.counted) !== null && this.num(r.counted) >= 0);
     }
     step(r, by) {
+        if (this.props.locked) {
+            return;
+        }
         const n = this.num(r.counted) ?? 0;
         r.counted = this.fmt(Math.max(0, n + by));
     }

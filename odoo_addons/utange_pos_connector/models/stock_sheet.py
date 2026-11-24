@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from odoo import api, fields, models
 from odoo.exceptions import UserError
 from odoo.tools import float_is_zero
@@ -110,6 +112,13 @@ class UtangeStockSheet(models.Model):
         return [{'product_id': p.id, 'name': p.display_name, 'uom': p.uom_id.name or '',
                  'point': config._utange_point_label(p.product_tmpl_id._utange_point()),
                  'ref': on_hand.get(p.id, (None, 0.0))[1], 'last_close': last_count.get(p.id)} for p in products]
+
+    @api.model
+    def _previous_closer(self, config):
+        """The employee who closed the last shift of this POS (a shortage at opening is billed to them)."""
+        last = self.search([('config_id', '=', config.id), ('close_confirmed', '=', True)],
+                           order='close_date desc, id desc', limit=1)
+        return last.close_employee_id
 
     def _adjust_stock(self, phase):
         """Approved differences: the stock at each line's location is moved by the difference
@@ -244,11 +253,20 @@ class UtangeStockSheet(models.Model):
             if not pids:
                 continue
             sold, amount = {}, {}
+            if not sheet.session_id:
+                # an opening count made before its session (handheld / Odoo) that was never linked: the session of
+                # this POS that started after it
+                found = self.env['pos.session'].sudo().search([
+                    ('config_id', '=', sheet.config_id.id), ('rescue', '=', False),
+                    ('start_at', '>=', sheet.open_date - timedelta(minutes=5))], order='id asc', limit=1)
+                if found and not self.search_count([('session_id', '=', found.id), ('id', '!=', sheet.id)]):
+                    sheet.session_id = found.id
             if sheet.session_id:
+                # Every paid order of the shift's session counts (no time filter: orders from the Odoo POS screen carry
+                # the till's own clock, which can be behind the server and made sales go missing here).
                 pos_lines = self.env['pos.order.line'].sudo().search([
                     ('order_id.session_id', '=', sheet.session_id.id),
                     ('order_id.state', 'in', ('paid', 'done', 'invoiced')),
-                    ('order_id.date_order', '>=', sheet.open_date),
                     ('product_id', 'in', pids)])
                 for pl in pos_lines:
                     sold[pl.product_id.id] = sold.get(pl.product_id.id, 0.0) + pl.qty
@@ -352,9 +370,12 @@ class UtangeStockSheet(models.Model):
         for s in self:
             if s.state != 'draft':
                 continue
+            locked = not self.env.su and s.config_id._utange_counts_locked(user=self.env.user)
             for l in s.line_ids:  # what Odoo has right now
                 if l.location_id:
                     l.system_open = l.product_id.with_context(location=l.location_id.id).qty_available
+                if locked:
+                    l.counted_open = l.system_open  # only managers change counts
             s.write({'state': 'open', 'open_date': fields.Datetime.now(), 'open_user_id': self.env.user.id})
             s.message_post(body='Opening count confirmed in Odoo: %d differences.' % s.open_diff_count)
             s._settle('open', self.env.user.name if self.env.user._utange_can_approve() else None)
@@ -377,7 +398,8 @@ class UtangeStockSheet(models.Model):
         for s in self:
             if s.state != 'closing' or s.close_confirmed:
                 continue
-            counts = {l.product_id.id: l.counted_close for l in s.line_ids}
+            locked = not self.env.su and s.config_id._utange_counts_locked(user=self.env.user)
+            counts = {} if locked else {l.product_id.id: l.counted_close for l in s.line_ids}
             s._refresh_movements(until=now)
             for l in s.line_ids:
                 l.write({'counted_close': counts.get(l.product_id.id, l.expected_close), 'closed': True})

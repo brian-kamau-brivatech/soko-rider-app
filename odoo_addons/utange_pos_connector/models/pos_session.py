@@ -82,7 +82,15 @@ class PosSession(models.Model):
             ready.session_id = self.id
             return {'needed': False, 'sheet': ready.name}
         return {'needed': True, 'lines': Sheet._opening_items(cfg), 'corrects': bool(cfg.utange_apply_open_count),
-                'can_approve': self._utange_can_approve_now(employee_id)}
+                'can_approve': self._utange_can_approve_now(employee_id), 'locked': self._utange_locked(employee_id),
+                'previous_closer': Sheet._previous_closer(cfg).name or ''}
+
+    def _utange_locked(self, employee_id=False):
+        """Cashiers confirm the figures as shown; only managers type counts."""
+        cfg = self.config_id
+        emp = self.env['hr.employee'].sudo().browse(int(employee_id)).exists() \
+            if employee_id and cfg.module_pos_hr else None
+        return cfg._utange_counts_locked(employee=emp) if emp else cfg._utange_counts_locked(user=self.env.user)
 
     def _utange_approver(self, employee, manager_pin):
         """Who approves differences right now: a manager's PIN, or the signed-in cashier/user being a manager."""
@@ -105,7 +113,8 @@ class PosSession(models.Model):
                 raise UserError(denied)
             emp = self._utange_employee(employee_id)
             by = self._utange_approver(emp, manager_pin)
-            sheet = self.env['utange.stock.sheet'].sudo()._start(self.config_id, self, _counts(counts), employee=emp)
+            counted = {} if self._utange_locked(employee_id) else _counts(counts)
+            sheet = self.env['utange.stock.sheet'].sudo()._start(self.config_id, self, counted, employee=emp)
             sheet.open_user_id = self.env.uid
             sheet.message_post(body='Opening stock confirmed on the Odoo POS screen%s.' % ((' by %s' % emp.name) if emp else ''))
             sheet._settle('open', by, note)
@@ -126,7 +135,8 @@ class PosSession(models.Model):
         if sheet.close_confirmed:
             return {'needed': False, 'sheet': sheet.name}
         sheet._refresh_movements(until=fields.Datetime.now())
-        return {'needed': True, 'sheet': sheet.name, 'can_approve': self._utange_can_approve_now(employee_id), 'lines': [{
+        return {'needed': True, 'sheet': sheet.name, 'can_approve': self._utange_can_approve_now(employee_id),
+                'locked': self._utange_locked(employee_id), 'lines': [{
             'product_id': l.product_id.id, 'name': l.product_id.display_name, 'point': l.point or '',
             'uom': l.product_id.uom_id.name or '', 'opening': l.counted_open, 'received': l.received,
             'sent_out': l.sent_out, 'sold': l.sold, 'ref': l.expected_close} for l in sheet.line_ids]}
@@ -141,7 +151,7 @@ class PosSession(models.Model):
                 raise UserError(denied)
             emp = self._utange_employee(employee_id)
             by = self._utange_approver(emp, manager_pin)
-            sheet._finish(_counts(counts), employee=emp)
+            sheet._finish({} if self._utange_locked(employee_id) else _counts(counts), employee=emp)
             sheet.write({'close_user_id': self.env.uid, 'state': 'closing'})
             sheet.message_post(body='Closing stock confirmed on the Odoo POS screen%s.' % ((' by %s' % emp.name) if emp else ''))
             sheet._settle('close', by, note)

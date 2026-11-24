@@ -42,6 +42,7 @@
                         <field name="utange_auto_issue"/>
                         <field name="utange_require_sheet"/>
                         <field name="utange_count_at_close"/>
+                        <field name="utange_counts_manager_only"/>
                         <field name="utange_sheet_categ_ids" widget="many2many_tags"/>
                     </group>
                     <p class="text-muted">

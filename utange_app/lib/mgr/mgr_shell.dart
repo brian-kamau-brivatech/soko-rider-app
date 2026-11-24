@@ -3,6 +3,7 @@ import '../ui.dart';
 import 'mgr_dashboard.dart';
 import 'mgr_items.dart';
 import 'mgr_purchase.dart';
+import 'mgr_reports.dart';
 import 'mgr_requests.dart';
 import 'mgr_sheets.dart';
 
@@ -17,7 +18,7 @@ class MgrShell extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
         valueListenable: mgrTab,
         builder: (context, t, _) => Scaffold(
-          body: IndexedStack(index: t, children: const [MgrDashboard(), MgrRequests(), MgrSheets(), MgrItems(), MgrPurchases()]),
+          body: IndexedStack(index: t, children: const [MgrDashboard(), MgrRequests(), MgrSheets(), MgrItems(), MgrPurchases(), MgrMore()]),
           bottomNavigationBar: NavigationBar(
             selectedIndex: t,
             onDestinationSelected: (v) => mgrTab.value = v,
@@ -30,6 +31,7 @@ class MgrShell extends StatelessWidget {
               NavigationDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check_rounded), label: 'Sheets'),
               NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2_rounded), label: 'Items'),
               NavigationDestination(icon: Icon(Icons.shopping_cart_outlined), selectedIcon: Icon(Icons.shopping_cart_rounded), label: 'Buy'),
+              NavigationDestination(icon: Icon(Icons.bar_chart_outlined), selectedIcon: Icon(Icons.bar_chart_rounded), label: 'Reports'),
             ],
           ),
         ),

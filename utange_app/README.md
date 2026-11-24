@@ -17,6 +17,25 @@ through the Odoo module `odoo_addons/utange_pos_connector`.
 - Requisition approved -> internal transfer store -> bar (Inventory). When the store validates it, the requisition is Issued.
 - Stock sheet: printable (Print button), same columns as the paper book.
 
+## Staff, bills and counts (module 17.0.9.0)
+
+* **Waiter / cashier rights**: "Take payment (charge)" is a right of its own. A waiter takes orders, sends them to the
+  kitchen / bar and prints the bill, but cannot charge. Set it in Odoo (BRV Access tab) or in the Manager app
+  (Reports > Staff rights: Waiter / Cashier / Everything). People who could sell before keep charging.
+* **Counts are for managers**: with "Only managers change stock counts" (Handheld settings, on by default) a cashier
+  opens and closes with the figures the system shows. A shortage found at opening is sold as an **Employee bill** to
+  the person who closed the last shift (Charge > Employee bill; needs the Customer Account payment method).
+* **Employees bills**: Odoo > Point of Sale > Handheld > Employees bills, and Manager app > Reports > Employees bills
+  (clear when paid / deducted).
+* **Open bills per person**: tables show the waiter's name; "My bills" filter; the people icon lists unpaid bills per
+  person; closing the shift shows each person's sales and whether their bills are cleared.
+* **Internal note** per item (cart > note icon): printed under the item on the kitchen / bar ticket and kept on the Odoo order.
+* **Bill** print before payment; **prices and total** on kitchen / captain tickets.
+* **Manager app > Reports**: sales report (day, payment, cashier, category, item), stock report per day (opening,
+  in, out, sold, closing, differences), stock take of the main store / bar / kitchen, transfer main store -> bar / kitchen.
+* Fix: "Sold" on the closing count now takes every paid order of the shift (orders from a till whose clock is behind
+  were left out).
+
 ## Install / update the module (server)
 Copy `odoo_addons/utange_server_install.sh` to the server and run it (backs up the database first).
 

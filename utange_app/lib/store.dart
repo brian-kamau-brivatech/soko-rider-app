@@ -27,6 +27,8 @@ class Store extends ChangeNotifier {
   String cashierToken = '';
   String cashierName = '';
   String cashierRole = '';
+  /// Rights of the signed-in person (waiter: no 'charge'). Empty = everything allowed.
+  Map<String, bool> cashierPerms = {};
   Uint8List? logo;
   // Manager
   String managerName = '';
@@ -35,6 +37,9 @@ class Store extends ChangeNotifier {
   bool get managerReady => server.isNotEmpty && managerName.isNotEmpty && Api.cookie.isNotEmpty;
   bool get needsCashier => posReady && cashiersOn && cashierToken.isEmpty;
   bool get isManager => !cashiersOn || cashierRole == 'manager';
+  /// May the signed-in person do [perm] (sell, charge, open, close, requisition)?
+  bool can(String perm) => cashierPerms[perm] ?? true;
+  int get cashierId => int.tryParse(cashierToken.split('.').first) ?? 0;
 
   Map<String, dynamic> base([Map<String, dynamic> extra = const {}]) => {
         'pin': pin,
@@ -56,6 +61,7 @@ class Store extends ChangeNotifier {
     cashierToken = _p.getString('cashier_token') ?? '';
     cashierName = _p.getString('cashier_name') ?? '';
     cashierRole = _p.getString('cashier_role') ?? '';
+    cashierPerms = _perms(_p.getString('cashier_perms') ?? '');
     managerName = _p.getString('manager_name') ?? '';
     final logoB64 = _p.getString('logo');
     if (logoB64 != null && logoB64.isNotEmpty) {
@@ -138,13 +144,34 @@ class Store extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setCashier(String token, String name, String role) async {
+  static Map<String, bool> _perms(String s) {
+    final out = <String, bool>{};
+    for (final kv in s.split(',')) {
+      final p = kv.split('=');
+      if (p.length == 2 && p[0].isNotEmpty) out[p[0]] = p[1] == '1';
+    }
+    return out;
+  }
+
+  Future<void> setCashier(String token, String name, String role, [Map<String, bool>? perms]) async {
     cashierToken = token;
     cashierName = name;
     cashierRole = role;
+    cashierPerms = perms ?? {};
     await _p.setString('cashier_token', token);
     await _p.setString('cashier_name', name);
     await _p.setString('cashier_role', role);
+    await _p.setString('cashier_perms', cashierPerms.entries.map((e) => '${e.key}=${e.value ? 1 : 0}').join(','));
+    notifyListeners();
+  }
+
+  /// Rights refreshed from the server (shift screen / session info).
+  Future<void> setPerms(Map<String, bool> perms) async {
+    if (perms.isEmpty || cashierToken.isEmpty) return;
+    final same = perms.length == cashierPerms.length && perms.entries.every((e) => cashierPerms[e.key] == e.value);
+    if (same) return;
+    cashierPerms = perms;
+    await _p.setString('cashier_perms', perms.entries.map((e) => '${e.key}=${e.value ? 1 : 0}').join(','));
     notifyListeners();
   }
 
@@ -152,6 +179,8 @@ class Store extends ChangeNotifier {
     cashierToken = '';
     cashierName = '';
     cashierRole = '';
+    cashierPerms = {};
+    await _p.remove('cashier_perms');
     await _p.remove('cashier_token');
     await _p.remove('cashier_name');
     await _p.remove('cashier_role');

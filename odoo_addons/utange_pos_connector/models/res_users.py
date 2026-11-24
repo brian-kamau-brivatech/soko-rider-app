@@ -2,7 +2,8 @@ from odoo import _, api, fields, models
 
 # What a person may do in Utange (handheld, Odoo POS screen, Odoo, Manager app).
 PERMS = [
-    ('sell', 'Sell on the handheld'),
+    ('sell', 'Take orders on the handheld (waiter)'),
+    ('charge', 'Take payment / charge (cashier)'),
     ('open', 'Open shifts (opening stock count)'),
     ('close', 'Close shifts (closing stock count)'),
     ('requisition', 'Make requisitions'),
@@ -20,6 +21,9 @@ class UtangePermissionMixin(models.AbstractModel):
         'Restrict Utange POS',
         help='Off: this person can do everything in Utange (as before). On: only what is ticked below.')
     utange_perm_sell = fields.Boolean(PERM_LABEL['sell'])
+    utange_perm_charge = fields.Boolean(PERM_LABEL['charge'],
+                                        help='Off: a waiter - can take orders, send them to the kitchen / bar and print the bill, '
+                                             'but cannot take payment.')
     utange_perm_open = fields.Boolean(PERM_LABEL['open'])
     utange_perm_close = fields.Boolean(PERM_LABEL['close'])
     utange_perm_requisition = fields.Boolean(PERM_LABEL['requisition'])

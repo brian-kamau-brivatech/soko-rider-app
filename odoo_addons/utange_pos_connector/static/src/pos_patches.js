@@ -62,6 +62,8 @@ patch(PosStore.prototype, {
                 corrects: res.corrects,
                 canCancel: true,
                 isManager: !!res.can_approve,
+                locked: !!res.locked,
+                previousCloser: res.previous_closer || "",
                 configId: this.config.id,
             });
             if (!confirmed) {
@@ -201,6 +203,7 @@ patch(ClosePosPopup.prototype, {
             lines: res.lines,
             canCancel: true,
             isManager: !!res.can_approve,
+            locked: !!res.locked,
             configId: this.pos.config.id,
         });
         if (!confirmed) {

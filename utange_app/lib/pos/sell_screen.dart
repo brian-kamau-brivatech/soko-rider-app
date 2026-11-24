@@ -23,6 +23,8 @@ class _SellScreenState extends State<SellScreen> {
   String _q = '';
   int? _cat;
   final Map<int, double> _cart = {};
+  final Map<int, String> _notes = {}; // product -> internal note for the kitchen / bar (Odoo "Internal Note")
+  bool _mine = false; // tables: only the ones with my open bills
   // Order button (like Odoo): what each kitchen / bar printer already printed for this order, and its table / name
   final Map<int, Map<int, double>> _sent = {};
   String _label = '';
@@ -77,10 +79,118 @@ class _SellScreenState extends State<SellScreen> {
     return null;
   }
 
-  List<(int, double, String, List<int>)> get _cartForKitchen => [
+  List<(int, double, String, List<int>, double, String)> get _cartForKitchen => [
         for (final e in _cart.entries)
-          if (_p(e.key) != null) (e.key, e.value, _p(e.key)!.name, _p(e.key)!.categIds),
+          if (_p(e.key) != null) (e.key, e.value, _p(e.key)!.name, _p(e.key)!.categIds, _p(e.key)!.price, _notes[e.key] ?? ''),
       ];
+
+  bool get _canCharge => Store.i.can('charge');
+
+  /// Internal note on an item (e.g. "no ice", "well done"): printed under the item on the kitchen / bar ticket.
+  Future<void> _editNote(int id) async {
+    final p = _p(id);
+    if (p == null) return;
+    final c = TextEditingController(text: _notes[id] ?? '');
+    final v = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Internal note · ${p.name}'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          maxLength: 120,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(hintText: 'e.g. no ice, well done, extra hot'),
+        ),
+        actions: [
+          if ((_notes[id] ?? '').isNotEmpty) TextButton(onPressed: () => Navigator.pop(ctx, ''), child: const Text('Remove')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (v == null || !mounted) return;
+    setState(() {
+      _dirty = true;
+      if (v.isEmpty) {
+        _notes.remove(id);
+      } else {
+        _notes[id] = v;
+      }
+    });
+  }
+
+  /// The bill (before payment), like Odoo's Bill button. A table order is saved to Odoo first.
+  Future<void> _printBill() async {
+    final st = _setup;
+    if (st == null || _cart.isEmpty) return;
+    if (_table != null && (_dirty || _orderId == null)) {
+      if (!await _saveTable(quiet: false)) return;
+    }
+    final title = _table != null ? 'Table ${_table!['name']}${_orderRef.isEmpty ? '' : ' · ${_orderRef.replaceFirst('Order ', '')}'}' : (_label.isEmpty ? 'Bill' : _label);
+    final ok = await Receipt.printBill(st: st, title: title, cashier: Store.i.cashierName, lines: [
+      for (final e in _cart.entries)
+        if (_p(e.key) != null) (_p(e.key)!.name, e.value, _p(e.key)!.price, _notes[e.key] ?? ''),
+    ]);
+    if (mounted) toast(context, ok ? 'Bill printed.' : 'The bill did not print. Check the printer (More > Printer).');
+  }
+
+  /// Bills not yet paid in this shift, per person (like a tag per waiter): who still has open orders.
+  Future<void> _openBills() async {
+    Map<String, dynamic> r;
+    try {
+      r = await Api.call('/utange/pos/open_bills', Store.i.base());
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+      await Store.i.handle(e);
+      return;
+    }
+    if (!mounted) return;
+    final users = ll(r['users']);
+    final floors = _floors ?? const <Map<String, dynamic>>[];
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+          child: ListView(shrinkWrap: true, padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), children: [
+            Text('Open bills', style: h(18)),
+            const SizedBox(height: 4),
+            Text(users.isEmpty ? 'Every bill of this shift is paid.' : 'Not paid yet, per person. They must be cleared before the shift closes.',
+                style: const TextStyle(color: C.muted)),
+            for (final u in users) ...[
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: Text(ss(u['name']), style: h(15.5))),
+                Pill('${ll(u['bills']).length} open · ${ksh(dd(u['amount']))}', fg: C.red, bg: C.redLight),
+              ]),
+              for (final b in ll(u['bills']))
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.receipt_long_rounded),
+                  title: Text([if (ss(b['table']).isNotEmpty) 'Table ${b['table']}', ss(b['name'])].join(' · ')),
+                  subtitle: Text('${ss(b['floor'])}${ss(b['since']).length >= 16 ? ' · since ${ss(b['since']).substring(11, 16)}' : ''}'),
+                  trailing: Text(ksh(dd(b['amount'])), style: h(14)),
+                  onTap: ii(b['table_id']) == 0
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          for (final f in floors) {
+                            for (final t in ll(f['tables'])) {
+                              if (ii(t['id']) == ii(b['table_id'])) _openTable(f, t);
+                            }
+                          }
+                        },
+                ),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
 
   /// How many items changed since the last Order (the number on the Order button, like Odoo).
   int get _unsent {
@@ -193,6 +303,7 @@ class _SellScreenState extends State<SellScreen> {
 
   void _resetOrder() {
     _sent.clear();
+    _notes.clear();
     _label = '';
     _orderId = null;
     _orderRef = '';
@@ -279,6 +390,7 @@ class _SellScreenState extends State<SellScreen> {
       final pid = ii(l['product_id']);
       _cart[pid] = (_cart[pid] ?? 0) + dd(l['qty']);
       if (ss(l['uuid']).isNotEmpty) _uuids.putIfAbsent(pid, () => ss(l['uuid']));
+      if (ss(l['note']).isNotEmpty) _notes[pid] = ss(l['note']);
     }
     final mine = o['sent'] is Map ? Map<String, dynamic>.from(o['sent'] as Map) : <String, dynamic>{};
     for (final e in mine.entries) {
@@ -316,7 +428,13 @@ class _SellScreenState extends State<SellScreen> {
         if (_orderId != null) 'order_id': _orderId,
         'uid': _orderUid,
         'lines': [
-          for (final e in _cart.entries) {'product_id': e.key, 'qty': e.value, if (_uuids[e.key] != null) 'uuid': _uuids[e.key]}
+          for (final e in _cart.entries)
+            {
+              'product_id': e.key,
+              'qty': e.value,
+              if (_uuids[e.key] != null) 'uuid': _uuids[e.key],
+              if ((_notes[e.key] ?? '').isNotEmpty) 'note': _notes[e.key],
+            }
         ],
         'sent': {
           for (final e in _sent.entries) '${e.key}': {for (final i in e.value.entries) '${i.key}': i.value}
@@ -384,7 +502,10 @@ class _SellScreenState extends State<SellScreen> {
   Widget _tablesView(PosSetup s) {
     final floors = _floors ?? const <Map<String, dynamic>>[];
     final floor = floors.where((f) => f['id'] == _floorId).firstOrNull ?? floors.firstOrNull;
-    final tables = floor == null ? const <Map<String, dynamic>>[] : ll(floor['tables']);
+    final me = Store.i.cashierId;
+    final tables = (floor == null ? const <Map<String, dynamic>>[] : ll(floor['tables']))
+        .where((t) => !_mine || ((t['employee_ids'] as List?) ?? const []).map(ii).contains(me))
+        .toList();
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
@@ -404,6 +525,8 @@ class _SellScreenState extends State<SellScreen> {
                   label: Text(Store.i.cashierName.split(' ').first),
                   onPressed: () => Store.i.clearCashier(),
                 ),
+              if (s.sessionOpen)
+                IconButton(tooltip: 'Open bills per person', onPressed: _openBills, icon: const Icon(Icons.people_alt_rounded)),
               IconButton(tooltip: 'Refresh', onPressed: _loadTables, icon: const Icon(Icons.refresh_rounded)),
             ]),
           ),
@@ -426,6 +549,7 @@ class _SellScreenState extends State<SellScreen> {
           SizedBox(
             height: 48,
             child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), children: [
+              if (Store.i.cashierId > 0) _chip('My bills', _mine, () => setState(() => _mine = !_mine)),
               for (final f in floors) _chip('${f['name']}', f['id'] == floor?['id'], () => setState(() => _floorId = ii(f['id']))),
             ]),
           ),
@@ -467,6 +591,19 @@ class _SellScreenState extends State<SellScreen> {
                                         Padding(
                                           padding: const EdgeInsets.only(top: 4),
                                           child: Text(ksh(dd(t['amount'])), style: h(12, color: Colors.white)),
+                                        ),
+                                      if (busy && ((t['waiters'] as List?) ?? const []).isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 3),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                            decoration: BoxDecoration(color: C.navy, borderRadius: BorderRadius.circular(6)),
+                                            child: Text(
+                                                ((t['waiters'] as List).map((w) => ss(w).split(' ').first)).join(', '),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: h(10.5, color: Colors.white)),
+                                          ),
                                         ),
                                     ]),
                                   ),
@@ -574,6 +711,10 @@ class _SellScreenState extends State<SellScreen> {
   }
 
   Future<void> _charge() async {
+    if (!_canCharge) {
+      toast(context, '${Store.i.cashierName.isEmpty ? 'You' : Store.i.cashierName} can take orders and print the bill. A cashier takes the payment.');
+      return;
+    }
     // Fresh payment methods and session state from Odoo POS on every charge.
     try {
       final fresh = PosSetup.fromJson(await Api.call('/utange/pos/setup', Store.i.base()));
@@ -602,7 +743,7 @@ class _SellScreenState extends State<SellScreen> {
         setup: s,
         lines: [
           for (final e in _cart.entries)
-            if (_p(e.key) != null) CartLine(_p(e.key)!, e.value),
+            if (_p(e.key) != null) CartLine(_p(e.key)!, e.value, _notes[e.key] ?? ''),
         ],
         sent: _sent,
         label: _label,
@@ -652,12 +793,21 @@ class _SellScreenState extends State<SellScreen> {
                       if (_p(id) != null)
                         ListTile(
                           title: Text(_p(id)!.name, style: h(14.5, w: FontWeight.w700)),
-                          subtitle: Text('${ksh(_p(id)!.price)} × ${_qtyText(_cart[id] ?? 0)}'),
+                          subtitle: Text('${ksh(_p(id)!.price)} × ${_qtyText(_cart[id] ?? 0)}'
+                              '${(_notes[id] ?? '').isEmpty ? '' : '\n✎ ${_notes[id]}'}'),
                           onTap: () async {
                             await _setQty(_p(id)!);
                             setSheet(() {});
                           },
                           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                            IconButton(
+                              tooltip: 'Internal note',
+                              icon: Icon(Icons.edit_note_rounded, color: (_notes[id] ?? '').isEmpty ? C.muted : C.blue),
+                              onPressed: () async {
+                                await _editNote(id);
+                                setSheet(() {});
+                              },
+                            ),
                             IconButton(
                               tooltip: 'One less',
                               icon: const Icon(Icons.remove_circle_outline),
@@ -700,19 +850,31 @@ class _SellScreenState extends State<SellScreen> {
                     ),
                   ),
                 Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      onPressed: _cart.isEmpty ? null : _printBill,
+                      icon: const Icon(Icons.receipt_rounded),
+                      label: Text('Print bill · ${ksh(_total)}', style: h(16)),
+                    ),
+                  ),
+                ),
+                Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   child: SizedBox(
                     width: double.infinity,
                     height: 54,
                     child: ElevatedButton(
-                      onPressed: _cart.isEmpty
+                      onPressed: _cart.isEmpty || !_canCharge
                           ? null
                           : () {
                               Navigator.pop(ctx);
                               _charge();
                             },
                       style: ElevatedButton.styleFrom(backgroundColor: C.green, foregroundColor: Colors.white),
-                      child: Text('Charge ${ksh(_total)}', style: h(17, color: Colors.white)),
+                      child: Text(_canCharge ? 'Charge ${ksh(_total)}' : 'A cashier takes the payment', style: h(17, color: Colors.white)),
                     ),
                   ),
                 ),
@@ -891,11 +1053,18 @@ class _SellScreenState extends State<SellScreen> {
                         ),
                         const SizedBox(width: 8),
                       ],
-                      ElevatedButton(
-                        onPressed: _charge,
-                        style: ElevatedButton.styleFrom(backgroundColor: C.green, foregroundColor: Colors.white),
-                        child: Text('Charge', style: h(15, color: Colors.white)),
-                      ),
+                      _canCharge
+                          ? ElevatedButton(
+                              onPressed: _charge,
+                              style: ElevatedButton.styleFrom(backgroundColor: C.green, foregroundColor: Colors.white),
+                              child: Text('Charge', style: h(15, color: Colors.white)),
+                            )
+                          : ElevatedButton.icon(
+                              onPressed: _printBill,
+                              style: ElevatedButton.styleFrom(backgroundColor: C.gold, foregroundColor: Colors.white),
+                              icon: const Icon(Icons.receipt_rounded, size: 18),
+                              label: Text('Bill', style: h(15, color: Colors.white)),
+                            ),
                     ]),
                   ),
                 ),

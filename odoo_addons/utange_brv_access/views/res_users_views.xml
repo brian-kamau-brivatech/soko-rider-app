@@ -12,6 +12,7 @@
                     <group string="Utange POS: what this person can do">
                         <field name="utange_restrict" string="Restrict Utange POS"/>
                         <field name="utange_perm_sell" invisible="not utange_restrict"/>
+                        <field name="utange_perm_charge" invisible="not utange_restrict"/>
                         <field name="utange_perm_open" invisible="not utange_restrict"/>
                         <field name="utange_perm_close" invisible="not utange_restrict"/>
                         <field name="utange_perm_requisition" invisible="not utange_restrict"/>

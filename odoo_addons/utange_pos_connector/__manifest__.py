@@ -1,6 +1,6 @@
 {
     'name': 'Utange POS Handheld',
-    'version': '17.0.8.0',
+    'version': '17.0.9.0',
     'license': 'LGPL-3',
     'category': 'Sales/Point of Sale',
     'summary': 'Handheld POS app for Utange: POS employee login, shift stock sheets, bar requisitions',
@@ -26,6 +26,7 @@ Connects the Utange POS Android app (handheld) to Odoo Point of Sale.
         'views/pos_config_views.xml',
         'report/stock_sheet_report.xml',
         'views/res_users_views.xml',
+        'views/staff_bill_views.xml',
         'views/menu.xml',
     ],
     'assets': {

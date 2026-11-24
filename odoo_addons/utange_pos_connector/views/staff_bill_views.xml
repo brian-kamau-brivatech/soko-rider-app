@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Employees bills: credit sales to staff (e.g. a shortage at opening billed to whoever closed the last shift). -->
+    <record id="view_pos_order_staff_bill_tree" model="ir.ui.view">
+        <field name="name">pos.order.staff.bill.tree</field>
+        <field name="model">pos.order</field>
+        <field name="priority">90</field>
+        <field name="arch" type="xml">
+            <tree string="Employees bills" create="false" decoration-muted="utange_staff_cleared" decoration-danger="not utange_staff_cleared">
+                <header>
+                    <button name="action_utange_clear_staff" type="object" string="Mark cleared"/>
+                    <button name="action_utange_unclear_staff" type="object" string="Open again"/>
+                </header>
+                <field name="date_order"/>
+                <field name="utange_staff_id"/>
+                <field name="name"/>
+                <field name="utange_staff_reason"/>
+                <field name="employee_id" string="Billed by" optional="show"/>
+                <field name="session_id" optional="hide"/>
+                <field name="amount_total" sum="Total"/>
+                <field name="utange_staff_cleared"/>
+                <field name="utange_staff_cleared_by" optional="show"/>
+                <field name="utange_staff_cleared_date" optional="hide"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_pos_order_staff_bill_search" model="ir.ui.view">
+        <field name="name">pos.order.staff.bill.search</field>
+        <field name="model">pos.order</field>
+        <field name="priority">90</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="utange_staff_id"/>
+                <field name="name"/>
+                <filter name="open" string="Not cleared" domain="[('utange_staff_cleared', '=', False)]"/>
+                <filter name="cleared" string="Cleared" domain="[('utange_staff_cleared', '=', True)]"/>
+                <separator/>
+                <filter name="date" string="Date" date="date_order"/>
+                <group expand="1" string="Group by">
+                    <filter name="by_employee" string="Employee" context="{'group_by': 'utange_staff_id'}"/>
+                    <filter name="by_day" string="Day" context="{'group_by': 'date_order:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_staff_bills" model="ir.actions.act_window">
+        <field name="name">Employees bills</field>
+        <field name="res_model">pos.order</field>
+        <field name="view_mode">tree,form</field>
+        <field name="domain">[('utange_staff_id', '!=', False)]</field>
+        <field name="context">{'search_default_open': 1, 'search_default_by_employee': 1}</field>
+        <field name="view_ids" eval="[(5, 0, 0),
+            (0, 0, {'view_mode': 'tree', 'view_id': ref('view_pos_order_staff_bill_tree')})]"/>
+        <field name="search_view_id" ref="view_pos_order_staff_bill_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No employees bills</p>
+            <p>On the handheld: Charge &gt; Employee bill. The sale is charged to the employee (Customer Account on their contact).
+                Mark the bills cleared when the employee has paid or it was deducted.</p>
+        </field>
+    </record>
+
+    <record id="view_pos_order_form_staff" model="ir.ui.view">
+        <field name="name">pos.order.form.utange.staff</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_pos_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="utange_staff_id" invisible="not utange_staff_id"/>
+                <field name="utange_staff_reason" invisible="not utange_staff_id"/>
+                <field name="utange_staff_cleared" invisible="not utange_staff_id"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

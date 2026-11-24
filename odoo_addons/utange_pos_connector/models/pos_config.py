@@ -70,6 +70,11 @@ class PosConfig(models.Model):
         'Approved counts correct the stock', default=True,
         help='When a manager approves count differences (e.g. Odoo says 2 sodas, the shelf has 1), the bar/kitchen '
              'stock is corrected to what was counted (an inventory adjustment). The difference stays on the stock sheet.')
+    utange_counts_manager_only = fields.Boolean(
+        'Only managers change stock counts', default=True,
+        help='Cashiers open and close the shift with the figures the system shows (they cannot type other counts). '
+             'If something is missing at opening (system 4 sodas, shelf 3), the cashier sells it as an Employee bill to '
+             'the person who closed the last shift. Managers (and the Manager app stock take) set real counts.')
     utange_sheet_categ_ids = fields.Many2many(
         'pos.category', 'utange_sheet_pos_categ_rel', 'config_id', 'categ_id', string='Stock sheet categories',
         help='Only products of these POS categories are on the stock sheet. Empty: all stock-tracked POS products.')
@@ -239,6 +244,16 @@ class PosConfig(models.Model):
             allowed = self.env['pos.category'].search([('id', 'child_of', self.utange_sheet_categ_ids.ids)])
             products = products.filtered(lambda p: p.pos_categ_ids & allowed)
         return products
+
+    def _utange_counts_locked(self, employee=None, user=None):
+        """True when this person may not type stock counts (cashiers, when managers-only is on)."""
+        self.ensure_one()
+        if not self.utange_counts_manager_only:
+            return False
+        if employee:
+            return not (self._utange_is_manager(employee=employee) or employee.sudo().utange_approver)
+        user = user or self.env.user
+        return not (self._utange_is_manager(user=user) or user._utange_can_approve())
 
     def _utange_update_at_closing(self):
         return (self.company_id.point_of_sale_update_stock_quantities or 'closing') == 'closing'

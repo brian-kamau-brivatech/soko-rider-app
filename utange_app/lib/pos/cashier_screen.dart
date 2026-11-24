@@ -68,7 +68,8 @@ class _CashierScreenState extends State<CashierScreen> {
           Store.i.base({'cashier': '', 'employee_id': c.id, 'employee_pin': pin}));
       final who = Map<String, dynamic>.from(r['cashier'] as Map? ?? const {});
       await Store.i.setCashier(ss(r['token']), ss(who['name']).isEmpty ? c.name : ss(who['name']),
-          ss(who['role']).isEmpty ? c.role : ss(who['role']));
+          ss(who['role']).isEmpty ? c.role : ss(who['role']),
+          r['perms'] is Map ? {for (final e in (r['perms'] as Map).entries) '${e.key}': e.value == true} : null);
       if (widget.popWhenDone && mounted) Navigator.of(context).pop(true);
     } on ApiError catch (e) {
       if (mounted) toast(context, e.message);

@@ -235,11 +235,13 @@ class SaleLine {
   final double qty;
   final double price;
   final double total;
+  final String note;
   SaleLine.fromJson(Map<String, dynamic> j)
       : name = ss(j['name']),
         qty = dd(j['qty']),
         price = dd(j['price']),
-        total = dd(j['total']);
+        total = dd(j['total']),
+        note = ss(j['note']);
 }
 
 class SalePayment {
@@ -263,6 +265,7 @@ class Sale {
   final String customer;
   final String cashier;
   final int count;
+  final String staff; // Employee bill: charged to this employee
   final List<SalePayment> payments;
   final List<SaleLine> lines;
   Sale.fromJson(Map<String, dynamic> j)
@@ -276,6 +279,7 @@ class Sale {
         customer = ss(j['customer']),
         cashier = ss(j['cashier']),
         count = ii(j['count']),
+        staff = ss(j['staff']),
         payments = ll(j['payments']).map(SalePayment.fromJson).toList(),
         lines = ll(j['lines']).map(SaleLine.fromJson).toList();
   String get time => date.length >= 16 ? date.substring(11, 16) : date;
@@ -326,6 +330,8 @@ class SessionClosing {
   final List<NameAmount> other;
   final double? maxDifference;
   final List<String> drafts;
+  /// Everyone who took orders this shift: sales, bills not yet paid (cleared or not), employee bills.
+  final List<UserBills> byUser;
   SessionClosing.fromJson(Map<String, dynamic> j)
       : orders = ii(j['orders']),
         amount = dd(j['amount']),
@@ -337,7 +343,30 @@ class SessionClosing {
         cashMoves = j['cash'] is Map ? ll(j['cash']['moves']).map((e) => NameAmount(ss(e['name']), dd(e['amount']))).toList() : const [],
         other = ll(j['other']).map((e) => NameAmount(ss(e['name']), dd(e['amount']))).toList(),
         maxDifference = dn(j['max_difference']),
-        drafts = ((j['drafts'] as List?) ?? const []).map(ss).toList();
+        drafts = ((j['drafts'] as List?) ?? const []).map(ss).toList(),
+        byUser = ll(j['by_user']).map(UserBills.fromJson).toList();
+}
+
+class UserBills {
+  final String name;
+  final int employeeId;
+  final int orders;
+  final double sales;
+  final int openCount;
+  final double openAmount;
+  final List<String> open;
+  final double staffBills;
+  final bool cleared;
+  UserBills.fromJson(Map<String, dynamic> j)
+      : name = ss(j['name']),
+        employeeId = ii(j['employee_id']),
+        orders = ii(j['orders']),
+        sales = dd(j['sales']),
+        openCount = ii(j['open_count']),
+        openAmount = dd(j['open_amount']),
+        open = ((j['open'] as List?) ?? const []).map(ss).toList(),
+        staffBills = dd(j['staff_bills']),
+        cleared = j['cleared'] != false;
 }
 
 class SessionInfo {
@@ -364,6 +393,10 @@ class SessionInfo {
   final String sheetReady;
   /// The closing count was already confirmed in Odoo.
   final bool closeReady;
+  /// What the signed-in person may do ({sell, charge, open, close, ...}); empty = everything.
+  final Map<String, bool> perms;
+  /// Cashiers confirm the stock figures as shown; only managers type counts.
+  final bool countsLocked;
   SessionInfo.fromJson(Map<String, dynamic> j)
       : config = ss(j['config']),
         state = ss(j['state']),
@@ -385,7 +418,9 @@ class SessionInfo {
         openDiffs = j['sheet'] is Map ? ii(j['sheet']['open_diffs']) : 0,
         needsOpenCount = j['needs_open_count'] == true,
         sheetReady = (j['sheet_ready'] ?? '').toString(),
-        closeReady = j['close_ready'] == true;
+        closeReady = j['close_ready'] == true,
+        perms = j['perms'] is Map ? {for (final e in (j['perms'] as Map).entries) '${e.key}': e.value == true} : const {},
+        countsLocked = j['counts_locked'] == true;
   bool get isOpen => state == 'opened';
   bool get isClosing => state == 'closing_control';
   bool get canOpen => state == 'closed' || state == 'opening_control';

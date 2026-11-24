@@ -20,6 +20,8 @@ else:
               sequence="1"/>
     <menuitem id="menu_utange_variances" name="Stock variances" parent="menu_utange_root" action="action_sheet_variances" sequence="2"
               groups="point_of_sale.group_pos_manager"/>
+    <menuitem id="menu_utange_staff_bills" name="Employees bills" parent="menu_utange_root" action="action_staff_bills" sequence="3"
+              groups="point_of_sale.group_pos_manager"/>
     <menuitem id="menu_utange_requisitions" name="Requisitions" parent="menu_utange_root" action="action_requisition" sequence="5"/>
     <menuitem id="menu_utange_categories" name="Categories: bar / kitchen" parent="menu_utange_root"
               action="point_of_sale.product_pos_category_action" sequence="15" groups="point_of_sale.group_pos_manager"/>

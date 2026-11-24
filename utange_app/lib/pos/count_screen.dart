@@ -22,6 +22,8 @@ class _CountScreenState extends State<CountScreen> {
   bool _onlyLeft = false;
   String _point = '';
   bool _canApprove = false; // the signed-in cashier is a chosen approver: no PIN step
+  bool _locked = false; // cashiers confirm the figures as shown; only managers type counts
+  String _previousCloser = '';
   final Map<int, TextEditingController> _c = {};
 
   bool get _open => widget.phase == 'open';
@@ -50,8 +52,11 @@ class _CountScreenState extends State<CountScreen> {
         _items = items;
         _location = ss(r['location']);
         _canApprove = r['can_approve'] == true;
+        _locked = r['locked'] == true;
+        _previousCloser = ss(r['previous_closer']);
         for (final i in items) {
           _c.putIfAbsent(i.productId, () => TextEditingController());
+          if (_locked) _c[i.productId]!.text = qty(_open ? i.system : i.expected);
         }
       });
     } on ApiError catch (e) {
@@ -110,7 +115,7 @@ class _CountScreenState extends State<CountScreen> {
     );
     if (ok != true || !mounted) return;
     final counts = <Map<String, dynamic>>[for (final i in items) {'product_id': i.productId, 'qty': _val(i)}];
-    if (diffs.isEmpty || _canApprove) {
+    if (diffs.isEmpty || _canApprove || _locked) {
       Navigator.of(context).pop(<String, dynamic>{'counts': counts});
       return;
     }
@@ -159,6 +164,22 @@ class _CountScreenState extends State<CountScreen> {
                 borderRadius: BorderRadius.circular(6),
               ),
               const SizedBox(height: 8),
+              if (_locked)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: C.blueLight, borderRadius: BorderRadius.circular(12)),
+                  child: Text(
+                    _open
+                        ? 'Only a manager can change the counts: check the shelf against these figures and confirm. '
+                            'If something is missing, open the shift and sell it as an Employee bill'
+                            '${_previousCloser.isEmpty ? '' : ' to $_previousCloser'} (who closed the last shift).'
+                        : 'Only a manager can change the counts. These are the figures the system expects; confirm to close. '
+                            'Anything missing will show at the next opening.',
+                    style: const TextStyle(color: C.blue, fontWeight: FontWeight.w600, fontSize: 12.5),
+                  ),
+                )
+              else
               Text(
                 _open
                     ? 'Count what is really on the shelf and type it. "System" is what Odoo has. Differences need a manager.'
@@ -276,6 +297,7 @@ class _CountScreenState extends State<CountScreen> {
           width: 86,
           child: TextField(
             controller: _c[i.productId],
+            readOnly: _locked,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textAlign: TextAlign.center,
             style: h(18),

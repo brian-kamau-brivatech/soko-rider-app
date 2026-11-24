@@ -11,6 +11,7 @@
                         <group string="Utange POS: what this person can do">
                             <field name="utange_restrict"/>
                             <field name="utange_perm_sell" invisible="not utange_restrict"/>
+                            <field name="utange_perm_charge" invisible="not utange_restrict"/>
                             <field name="utange_perm_open" invisible="not utange_restrict"/>
                             <field name="utange_perm_close" invisible="not utange_restrict"/>
                             <field name="utange_perm_requisition" invisible="not utange_restrict"/>
@@ -51,6 +52,7 @@
                 <field name="utange_restrict" invisible="user_id"
                        help="For staff without an Odoo login (handheld PIN only). Staff with a login follow the login's BRV Access settings."/>
                 <field name="utange_perm_sell" invisible="user_id or not utange_restrict"/>
+                <field name="utange_perm_charge" invisible="user_id or not utange_restrict"/>
                 <field name="utange_perm_open" invisible="user_id or not utange_restrict"/>
                 <field name="utange_perm_close" invisible="user_id or not utange_restrict"/>
                 <field name="utange_perm_requisition" invisible="user_id or not utange_restrict"/>

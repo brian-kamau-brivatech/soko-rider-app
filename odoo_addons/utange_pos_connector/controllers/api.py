@@ -236,7 +236,7 @@ class UtangePosApi(http.Controller):
             return {'ok': False, 'error': 'Wrong PIN.'}
         P.set_param(key, '0|0')
         return {'ok': True, 'enabled': True, 'token': self._cashier_token(config, emp),
-                'cashier': {'id': emp.id, 'name': emp.name, 'role': role}}
+                'cashier': {'id': emp.id, 'name': emp.name, 'role': role}, 'perms': self._perms(emp)}
 
     # ------------------------------------------------------------------
     # Products, payment methods, receipt details
@@ -337,13 +337,14 @@ class UtangePosApi(http.Controller):
     # ------------------------------------------------------------------
     @http.route('/utange/pos/sell', type='json', auth='public', methods=['POST'], csrf=False)
     def sell(self, pin=None, config_id=None, cashier=None, lines=None, payments=None, customer_name=None, customer_id=None,
-             uid=None, order_id=None, **kw):
-        """lines: [{product_id, qty, price?, uuid?}]; payments: [{method_id, amount, ref?}];
-        order_id: a table order (draft in Odoo) to pay instead of making a new order."""
+             uid=None, order_id=None, staff_id=None, staff_reason=None, **kw):
+        """lines: [{product_id, qty, price?, uuid?, note?}]; payments: [{method_id, amount, ref?}];
+        order_id: a table order (draft in Odoo) to pay instead of making a new order;
+        staff_id: an Employee bill - the sale is charged to that employee (Customer Account on their contact)."""
         config, emp, role, bad = self._guard(pin, config_id, cashier)
         if bad:
             return bad
-        denied = self._perm_denied(emp, 'sell')
+        denied = self._perm_denied(emp, 'sell') or self._perm_denied(emp, 'charge')
         if denied:
             return {'ok': False, 'error': denied}
         env = request.env
@@ -386,6 +387,13 @@ class UtangePosApi(http.Controller):
                         'no_stock': True}
         total = round(total, 2)
         methods = {m.id: m for m in config.payment_method_ids}
+        staff = env['hr.employee'].sudo().browse(int(staff_id)).exists() if str(staff_id or '').isdigit() else None
+        if staff:
+            later = [m for m in config.payment_method_ids if self._pay_later(m)]
+            if not later:
+                return {'ok': False, 'error': 'Employee bills need the "Customer Account" payment method on this POS '
+                                              '(Odoo: Point of Sale > Configuration > Settings > Payment methods).'}
+            payments = [{'method_id': later[0].id, 'amount': total}]
         ui_payments, paid, change = [], 0.0, 0.0
         now = fields.Datetime.to_string(fields.Datetime.now())
         for pay in (payments or []):
@@ -404,6 +412,8 @@ class UtangePosApi(http.Controller):
                 return {'ok': False, 'error': 'Only cash can be more than the total.'}
         partner = False
         name = (customer_name or '').strip()
+        if staff:
+            partner, customer_id, name = Order._utange_staff_partner(staff), None, ''
         if customer_id:
             partner = env['res.partner'].sudo().browse(int(customer_id)).exists()
         if not partner and name:
@@ -444,6 +454,9 @@ class UtangePosApi(http.Controller):
         order = Order.browse(res[0]['id']) if res else Order.search([('pos_reference', '=', ref)], limit=1)
         if not order:
             return {'ok': False, 'error': 'Odoo did not save the sale.'}
+        if staff:
+            order.write({'utange_staff_id': staff.id, 'utange_staff_reason': (staff_reason or '').strip()[:200] or False})
+            self._log_as(order, emp, 'Employee bill for %s%s.' % (staff.name, (': %s' % staff_reason) if staff_reason else ''))
         return {'ok': True, 'order': self._sale(order, detail=True)}
 
     def _next_ref(self, session):
@@ -460,6 +473,7 @@ class UtangePosApi(http.Controller):
         allowed = set(config._utange_products().ids)
         Product = request.env['product.product'].sudo()
         has_uuid = 'uuid' in request.env['pos.order.line']._fields
+        has_note = 'note' in request.env['pos.order.line']._fields  # pos_restaurant: the waiter's internal note
         ui_lines, total, tax_total = [], 0.0, 0.0
         for l in (lines or [])[:200]:
             p = Product.browse(int(l.get('product_id') or 0)).exists()
@@ -480,6 +494,8 @@ class UtangePosApi(http.Controller):
             }
             if has_uuid:
                 vals['uuid'] = str(l.get('uuid') or '') or str(uuid.uuid4())
+            if has_note and str(l.get('note') or '').strip():
+                vals['note'] = str(l['note']).strip()[:200]
             ui_lines.append([0, 0, vals])
         if not ui_lines:
             return [], 0.0, 0.0, 'Add at least one item.'
@@ -510,15 +526,21 @@ class UtangePosApi(http.Controller):
         busy = {}
         if session:
             for o in self._open_orders(session):
-                b = busy.setdefault(o.table_id.id, {'orders': 0, 'amount': 0.0, 'guests': 0})
+                b = busy.setdefault(o.table_id.id, {'orders': 0, 'amount': 0.0, 'guests': 0, 'waiters': [], 'employee_ids': []})
                 b['orders'] += 1
                 b['amount'] += o.amount_total
                 b['guests'] += o.customer_count or 0
+                emp, name = self._who(o)
+                if name not in b['waiters']:
+                    b['waiters'].append(name)
+                if emp and emp.id not in b['employee_ids']:
+                    b['employee_ids'].append(emp.id)
         floors = []
         for f in config.floor_ids.sorted(lambda f: (f.sequence, f.id)):
             tables = f.table_ids.filtered(lambda t: t.active).sorted(lambda t: (t.name or '', t.id))
             floors.append({'id': f.id, 'name': f.name, 'tables': [
-                {'id': tb.id, 'name': tb.name, 'seats': tb.seats or 0, **busy.get(tb.id, {'orders': 0, 'amount': 0.0, 'guests': 0})}
+                {'id': tb.id, 'name': tb.name, 'seats': tb.seats or 0,
+                 **busy.get(tb.id, {'orders': 0, 'amount': 0.0, 'guests': 0, 'waiters': [], 'employee_ids': []})}
                 for tb in tables]})
         return {'ok': True, 'floors': floors}
 
@@ -544,8 +566,10 @@ class UtangePosApi(http.Controller):
             'id': o.id, 'name': o.name, 'ref': o.pos_reference or '', 'guests': o.customer_count or 0,
             'amount': o.amount_total, 'customer': o.partner_id.name or '',
             'cashier': (o.employee_id.name if 'employee_id' in o._fields and o.employee_id else o.user_id.name) or '',
+            'employee_id': o.employee_id.id if 'employee_id' in o._fields and o.employee_id else 0,
             'lines': [{'product_id': l.product_id.id, 'name': l.full_product_name or l.product_id.display_name, 'qty': l.qty,
-                       'uuid': (l.uuid if 'uuid' in l._fields else '') or ''} for l in o.lines],
+                       'uuid': (l.uuid if 'uuid' in l._fields else '') or '',
+                       'note': (l.note if 'note' in l._fields else '') or ''} for l in o.lines],
             'sent': mine,  # {printer_id: {product_id: qty}} printed from the handheld
             'odoo_sent': {str(k): v for k, v in self._odoo_sent(o).items()},  # printed from either side, per product
         }
@@ -638,8 +662,10 @@ class UtangePosApi(http.Controller):
             if q <= 0 or not v.get('uuid'):
                 continue
             per_product[v['product_id']] -= q
-            change['%s - ' % v['uuid']] = {'attribute_value_ids': [], 'line_uuid': v['uuid'], 'product_id': v['product_id'],
-                                           'name': v['full_product_name'], 'note': '', 'quantity': q}
+            note = v.get('note') or ''
+            change['%s - %s' % (v['uuid'], note)] = {'attribute_value_ids': [], 'line_uuid': v['uuid'],
+                                                     'product_id': v['product_id'], 'name': v['full_product_name'],
+                                                     'note': note, 'quantity': q}
         data['last_order_preparation_change'] = json.dumps(change)
         try:
             res = Order.create_from_ui([{'data': data, 'to_invoice': False}], draft=True)
@@ -664,11 +690,13 @@ class UtangePosApi(http.Controller):
             'payments': [{'method': p.payment_method_id.name, 'amount': p.amount, 'ref': p.transaction_id or ''}
                          for p in o.payment_ids],
             'count': int(sum(o.lines.mapped('qty'))),
+            'staff': o.utange_staff_id.name or '',
         }
         if detail:
             data['lines'] = [{'name': l.full_product_name or l.product_id.display_name, 'qty': l.qty,
                               'price': round(l.price_subtotal_incl / l.qty, 2) if l.qty else l.price_unit,
-                              'total': l.price_subtotal_incl} for l in o.lines]
+                              'total': l.price_subtotal_incl, 'note': (l.note if 'note' in l._fields else '') or ''}
+                             for l in o.lines]
         return data
 
     @http.route('/utange/pos/sales', type='json', auth='public', methods=['POST'], csrf=False)
@@ -794,6 +822,8 @@ class UtangePosApi(http.Controller):
             'needs_open_count': bool(session and session.state == 'opened' and config.utange_require_sheet and not sheet),
             'sheet_ready': (self._ready_sheet(config).name or '') if (not session or session.state == 'opening_control') else '',
             'close_ready': bool(sheet and sheet.close_confirmed),
+            'perms': self._perms(emp),
+            'counts_locked': self._locked(config, emp),
         }
         if not session:
             return data
@@ -814,8 +844,39 @@ class UtangePosApi(http.Controller):
                 'other': [{'name': m['name'], 'amount': m['amount'], 'count': m['number']} for m in close['other_payment_methods']],
                 'max_difference': close.get('amount_authorized_diff'),
                 'drafts': [o.name for o in drafts][:20],
+                'by_user': self._by_user(session),
             }
         return data
+
+    def _who(self, o):
+        return (o.employee_id if 'employee_id' in o._fields and o.employee_id else None), \
+            ((o.employee_id.name if 'employee_id' in o._fields and o.employee_id else o.user_id.name) or '?')
+
+    def _by_user(self, session):
+        """Each person who took orders in the shift: sales, bills still open (not paid) and employee bills."""
+        rows = {}
+        for o in session.order_ids.filtered(lambda x: x.state != 'cancel'):
+            emp, name = self._who(o)
+            r = rows.setdefault(name, {'name': name, 'employee_id': emp.id if emp else 0, 'orders': 0, 'sales': 0.0,
+                                       'open_count': 0, 'open_amount': 0.0, 'open': [], 'staff_bills': 0.0})
+            if o.state == 'draft':
+                r['open_count'] += 1
+                r['open_amount'] += o.amount_total
+                r['open'].append('%s%s' % (o.name, (' (%s)' % o.table_id.name) if 'table_id' in o._fields and o.table_id else ''))
+            else:
+                r['orders'] += 1
+                r['sales'] += o.amount_total
+        for o in session.order_ids.filtered(lambda x: x.utange_staff_id and x.state != 'cancel'):
+            name = o.utange_staff_id.name
+            r = rows.setdefault(name, {'name': name, 'employee_id': o.utange_staff_id.id, 'orders': 0, 'sales': 0.0,
+                                       'open_count': 0, 'open_amount': 0.0, 'open': [], 'staff_bills': 0.0})
+            r['staff_bills'] += o.amount_total
+        out = []
+        for r in rows.values():
+            r.update({'sales': round(r['sales'], 2), 'open_amount': round(r['open_amount'], 2),
+                      'staff_bills': round(r['staff_bills'], 2), 'cleared': r['open_count'] == 0, 'open': r['open'][:10]})
+            out.append(r)
+        return sorted(out, key=lambda r: (r['cleared'], -r['open_amount'], r['name']))
 
     @http.route('/utange/pos/session', type='json', auth='public', methods=['POST'], csrf=False)
     def session(self, pin=None, config_id=None, cashier=None, **kw):
@@ -847,7 +908,8 @@ class UtangePosApi(http.Controller):
                       'expected': l.expected_close, 'price': l.price, 'point': l.point or '',
                       'categ': l.product_id.pos_categ_ids[:1].name or ''} for l in sheet.line_ids]
             return {'ok': True, 'phase': 'close', 'sheet': sheet.name, 'location': self._points_text(config), 'items': items,
-                    'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp))}
+                    'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp)),
+                    'locked': self._locked(config, emp)}
         order = {'bar': 0, 'kitchen': 1}
         products = config._utange_sheet_products().sorted(
             lambda p: (order.get(p.product_tmpl_id._utange_point(), 2), p.display_name))
@@ -860,7 +922,9 @@ class UtangePosApi(http.Controller):
                   'price': Sheet._price_incl(p, config), 'categ': p.pos_categ_ids[:1].name or ''} for p in products]
         return {'ok': True, 'phase': 'open', 'location': self._points_text(config), 'items': items,
                 'last_sheet': last.name if last else '',
-                'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp))}
+                'can_approve': bool(emp and config.sudo()._utange_is_manager(employee=emp)),
+                'locked': self._locked(config, emp),
+                'previous_closer': Sheet._previous_closer(config).name or ''}
 
     def _points_text(self, config):
         return ' · '.join('%s: %s' % (label, loc.display_name) for _p, label, loc in config._utange_points())
@@ -868,6 +932,15 @@ class UtangePosApi(http.Controller):
     def _perm_denied(self, emp, perm):
         """The signed-in cashier's Utange permissions (BRV Access / employee form)."""
         return emp.sudo()._utange_denied(perm) if emp else ''
+
+    def _perms(self, emp):
+        """{perm: allowed} for the app (waiter: no 'charge')."""
+        from ..models.res_users import PERMS
+        return {p: (emp.sudo()._utange_allowed(p) if emp else True) for p, _l in PERMS}
+
+    def _locked(self, config, emp):
+        """Cashiers confirm the stock figures as the system shows them; only managers type counts."""
+        return bool(emp) and config.sudo()._utange_counts_locked(employee=emp)
 
     def _approver(self, config, emp, role, manager_pin):
         """(name or None, error): a manager's PIN typed now, or the signed-in cashier being a manager."""
@@ -915,10 +988,11 @@ class UtangePosApi(http.Controller):
             return {'ok': True, 'message': '%s is already open.' % session.name, 'info': self._session_info(config, emp, role)}
         if session and session.state == 'closing_control':
             return {'ok': False, 'error': '%s is being closed. Finish closing it first.' % session.name}
-        counted = self._counts(counts)
+        locked = self._locked(config, emp)
+        counted = {} if locked else self._counts(counts)
         Sheet = request.env['utange.stock.sheet'].sudo()
         ready = self._ready_sheet(config) if not counted else Sheet
-        if config.utange_require_sheet and not ready:
+        if config.utange_require_sheet and not ready and not locked:
             needed = config._utange_sheet_products()
             missing = needed.filtered(lambda p: p.id not in counted)
             if missing:
@@ -977,9 +1051,10 @@ class UtangePosApi(http.Controller):
         if sheet:
             return {'ok': True, 'message': 'Stock sheet %s is already confirmed.' % sheet.name,
                     'info': self._session_info(config, emp, role)}
-        counted = self._counts(counts)
+        locked = self._locked(config, emp)
+        counted = {} if locked else self._counts(counts)
         missing = config._utange_sheet_products().filtered(lambda p: p.id not in counted)
-        if missing:
+        if missing and not locked:
             return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
                 len(missing), ', '.join(missing[:3].mapped('display_name'))), 'count_required': True}
         by, err = self._approver(config, emp, role, manager_pin)
@@ -1036,13 +1111,16 @@ class UtangePosApi(http.Controller):
         info = self._session_info(config, emp, role)
         closing = info.get('closing') or {}
         if closing.get('drafts'):
-            return {'ok': False, 'error': 'Unpaid POS orders are still open: %s. Pay or cancel them in Odoo POS first.'
-                    % ', '.join(closing['drafts'])}
+            who = ['%s: %d (KSh %.0f)' % (r['name'], r['open_count'], r['open_amount'])
+                   for r in closing.get('by_user') or [] if r['open_count']]
+            return {'ok': False, 'error': 'Bills not cleared - %s. Pay or cancel them first.'
+                    % ('; '.join(who) or ', '.join(closing['drafts']))}
         Sheet = request.env['utange.stock.sheet'].sudo()
         sheet = self._sheet_of(live) or Sheet._start(config, live, {}, outside=True)
-        counted = self._counts(counts)
+        locked = self._locked(config, emp)
+        counted = {} if locked else self._counts(counts)
         done_in_odoo = sheet.close_confirmed and not counted
-        if config.utange_count_at_close and not done_in_odoo:
+        if config.utange_count_at_close and not done_in_odoo and not locked:
             missing = sheet.line_ids.filtered(lambda l: l.product_id.id not in counted)
             if missing:
                 return {'ok': False, 'error': 'Count every item first: %d not counted (%s).' % (
@@ -1098,6 +1176,42 @@ class UtangePosApi(http.Controller):
                             'sheet': sheet.name, 'stock_diffs': short,
                             'stock_variance': round(sheet.close_diff_value, 2)},
                 'info': self._session_info(config, None, None)}
+
+    # ------------------------------------------------------------------
+    # Staff: employee bills and open bills per person
+    # ------------------------------------------------------------------
+    @http.route('/utange/pos/staff', type='json', auth='public', methods=['POST'], csrf=False)
+    def staff(self, pin=None, config_id=None, cashier=None, **kw):
+        """Employees an Employee bill can be charged to; the one who closed the last shift comes first."""
+        config, emp, role, bad = self._guard(pin, config_id, cashier)
+        if bad:
+            return bad
+        Emp = request.env['hr.employee'].sudo()
+        emps = Emp.search([('company_id', 'in', (config.company_id.id, False))], order='name', limit=300)
+        last = request.env['utange.stock.sheet'].sudo()._previous_closer(config)
+        return {'ok': True, 'last_closer': {'id': last.id, 'name': last.name} if last else None,
+                'staff': [{'id': e.id, 'name': e.name, 'job': e.job_title or ''} for e in emps]}
+
+    @http.route('/utange/pos/open_bills', type='json', auth='public', methods=['POST'], csrf=False)
+    def open_bills(self, pin=None, config_id=None, **kw):
+        """Bills not yet paid in the open shift, per person who took them."""
+        config, _e, _r, bad = self._guard(pin, config_id, need_cashier=False)
+        if bad:
+            return bad
+        session = self._open_session(config)
+        if not session:
+            return {'ok': True, 'users': []}
+        users = {}
+        for o in session.order_ids.filtered(lambda x: x.state == 'draft'):
+            emp, name = self._who(o)
+            u = users.setdefault(name, {'name': name, 'employee_id': emp.id if emp else 0, 'amount': 0.0, 'bills': []})
+            u['amount'] += o.amount_total
+            u['bills'].append({'id': o.id, 'name': o.name, 'amount': o.amount_total,
+                               'table': (o.table_id.name if 'table_id' in o._fields and o.table_id else ''),
+                               'table_id': (o.table_id.id if 'table_id' in o._fields and o.table_id else 0),
+                               'floor': (o.table_id.floor_id.name if 'table_id' in o._fields and o.table_id else ''),
+                               'since': self._local(o, o.date_order)})
+        return {'ok': True, 'users': sorted(users.values(), key=lambda u: -u['amount'])}
 
     # ------------------------------------------------------------------
     # Requisitions: the bar asks the store

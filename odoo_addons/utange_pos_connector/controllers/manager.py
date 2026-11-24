@@ -43,7 +43,7 @@ class UtangeManagerApi(http.Controller):
         u = request.env.user
         return {'ok': True, 'name': u.name, 'company': request.env.company.name,
                 'approve': u._utange_can_approve(),
-                'perms': {p: u._utange_allowed(p) for p in ('sell', 'open', 'close', 'requisition', 'purchase', 'items')}}
+                'perms': {p: u._utange_allowed(p) for p in ('sell', 'charge', 'open', 'close', 'requisition', 'purchase', 'items')}}
 
     @http.route('/utange/mgr/dashboard', type='json', auth='user', methods=['POST'], csrf=False)
     def dashboard(self, **kw):
@@ -475,3 +475,407 @@ class UtangeManagerApi(http.Controller):
                             'state': dict(p._fields['state'].selection).get(p.state, p.state), 'received': p.state == 'done',
                             'items': len(p.move_ids)})
         return {'ok': True, 'purchase': 'purchase.order' in env, 'purchases': out}
+
+    # ------------------------------------------------------------------
+    # Reports: sales, stock per day, employees bills
+    # ------------------------------------------------------------------
+    def _config(self, config_id=None):
+        Config = request.env['pos.config'].sudo()
+        cfg = Config.browse(int(config_id)).exists() if str(config_id or '').isdigit() and int(config_id) else Config
+        return cfg if cfg and cfg.active else self._cfg()
+
+    def _dates(self, date_from=None, date_to=None):
+        today = fields.Date.context_today(request.env.user)
+        try:
+            first = fields.Date.to_date(date_from) if date_from else today
+            last = fields.Date.to_date(date_to) if date_to else first
+        except Exception:
+            first = last = today
+        if last < first:
+            first, last = last, first
+        if (last - first).days > 92:
+            first = last - timedelta(days=92)
+        start = datetime.combine(first, time.min) - timedelta(hours=3)  # EAT midnight in UTC
+        end = datetime.combine(last, time.min) - timedelta(hours=3) + timedelta(days=1)
+        return first, last, start, end
+
+    @http.route('/utange/mgr/configs', type='json', auth='user', methods=['POST'], csrf=False)
+    def configs(self, **kw):
+        bad = self._check()
+        if bad:
+            return bad
+        cfgs = request.env['pos.config'].sudo().search([('active', '=', True)], order='name')
+        return {'ok': True, 'configs': [{'id': c.id, 'name': c.name} for c in cfgs]}
+
+    @http.route('/utange/mgr/sales_report', type='json', auth='user', methods=['POST'], csrf=False)
+    def sales_report(self, config_id=None, date_from=None, date_to=None, **kw):
+        bad = self._check()
+        if bad:
+            return bad
+        first, last, start, end = self._dates(date_from, date_to)
+        domain = [('state', 'in', ('paid', 'done', 'invoiced')), ('date_order', '>=', start), ('date_order', '<', end)]
+        if str(config_id or '').isdigit() and int(config_id):
+            domain.append(('config_id', '=', int(config_id)))
+        Order = request.env['pos.order'].sudo()
+        orders = Order.search(domain, order='date_order desc')
+        by_method, products, by_cashier, by_categ = {}, {}, {}, {}
+        for p in orders.payment_ids:
+            by_method[p.payment_method_id.name] = by_method.get(p.payment_method_id.name, 0) + p.amount
+        for l in orders.lines:
+            row = products.setdefault(l.product_id.id, {'name': l.product_id.display_name, 'qty': 0.0, 'total': 0.0})
+            row['qty'] += l.qty
+            row['total'] += l.price_subtotal_incl
+            cat = l.product_id.pos_categ_ids[:1].name or 'Other'
+            by_categ[cat] = by_categ.get(cat, 0.0) + l.price_subtotal_incl
+        for o in orders:
+            name = (o.employee_id.name if 'employee_id' in o._fields and o.employee_id else o.user_id.name) or '?'
+            row = by_cashier.setdefault(name, {'name': name, 'count': 0, 'total': 0.0})
+            row['count'] += 1
+            row['total'] += o.amount_total
+        days = []
+        d = first
+        while d <= last:
+            ds = datetime.combine(d, time.min) - timedelta(hours=3)
+            day_orders = orders.filtered(lambda o, ds=ds: ds <= o.date_order < ds + timedelta(days=1))
+            days.append({'day': fields.Date.to_string(d), 'total': round(sum(day_orders.mapped('amount_total')), 2),
+                         'count': len(day_orders)})
+            d += timedelta(days=1)
+        staff = orders.filtered('utange_staff_id')
+        open_bills = Order.search([('state', '=', 'draft'), ('session_id.state', '!=', 'closed')] +
+                                  ([('config_id', '=', int(config_id))] if str(config_id or '').isdigit() and int(config_id) else []))
+
+        def rnd(rows, key='total'):
+            return sorted(({k: (round(v, 2) if isinstance(v, float) else v) for k, v in r.items()} for r in rows),
+                          key=lambda x: -x[key])
+        return {
+            'ok': True, 'from': fields.Date.to_string(first), 'to': fields.Date.to_string(last),
+            'count': len(orders), 'total': round(sum(orders.mapped('amount_total')), 2),
+            'tax': round(sum(orders.mapped('amount_tax')), 2),
+            'staff_bills': round(sum(staff.mapped('amount_total')), 2), 'staff_bill_count': len(staff),
+            'open_bills': round(sum(open_bills.mapped('amount_total')), 2), 'open_bill_count': len(open_bills),
+            'by_method': [{'name': k, 'total': round(v, 2)} for k, v in sorted(by_method.items(), key=lambda x: -x[1])],
+            'by_cashier': rnd(by_cashier.values()),
+            'by_category': [{'name': k, 'total': round(v, 2)} for k, v in sorted(by_categ.items(), key=lambda x: -x[1])],
+            'products': rnd(products.values())[:60],
+            'days': list(reversed(days)) if len(days) > 1 else [],
+        }
+
+    @http.route('/utange/mgr/stock_report', type='json', auth='user', methods=['POST'], csrf=False)
+    def stock_report(self, config_id=None, day=None, **kw):
+        """One day: for every item the opening (first shift's opening count), what came in and went out, what was
+        sold, and the closing (last shift's closing count) - across all the shifts that opened that day."""
+        bad = self._check()
+        if bad:
+            return bad
+        cfg = self._config(config_id)
+        if not cfg:
+            return {'ok': False, 'error': 'No Point of Sale.'}
+        first, _last, start, end = self._dates(day, day)
+        Sheet = request.env['utange.stock.sheet'].sudo()
+        sheets = Sheet.search([('config_id', '=', cfg.id), ('state', '!=', 'draft'), ('open_date', '>=', start),
+                               ('open_date', '<', end)], order='open_date asc, id asc')
+        sheets.filtered(lambda s: s.state == 'open')._refresh_movements()
+        items = {}
+        for s in sheets:
+            for l in s.line_ids:
+                it = items.get(l.product_id.id)
+                if it is None:
+                    it = items[l.product_id.id] = {
+                        'name': l.product_id.display_name, 'point': l.point or '', 'uom': l.uom_id.name or '',
+                        'price': l.price, 'system_open': l.system_open, 'opening': l.counted_open, 'open_diff': l.open_diff,
+                        'received': 0.0, 'sent_out': 0.0, 'sold': 0.0, 'amount': 0.0, 'closing': None, 'close_diff': 0.0,
+                        'expected': 0.0}
+                it['received'] += l.received
+                it['sent_out'] += l.sent_out
+                it['sold'] += l.sold
+                it['amount'] += l.amount
+                it['expected'] = l.expected_close
+                if l.closed:
+                    it['closing'] = l.counted_close
+                    it['close_diff'] += l.close_diff
+                else:
+                    it['closing'] = None  # the last shift of the day is still open
+        rows = sorted(items.values(), key=lambda r: ({'Bar': 0, 'Kitchen': 1}.get(r['point'], 2), r['name']))
+        for r in rows:
+            for k in ('received', 'sent_out', 'sold', 'amount', 'close_diff', 'expected'):
+                r[k] = round(r[k], 3)
+        return {
+            'ok': True, 'config': cfg.name, 'day': fields.Date.to_string(first),
+            'shifts': [self._sheet_row(s) for s in sheets],
+            'items': rows,
+            'sales': round(sum(r['amount'] for r in rows), 2),
+            'variance': round(sum(r['close_diff'] * r['price'] for r in rows), 2),
+            'open_variance': round(sum(r['open_diff'] * r['price'] for r in rows), 2),
+        }
+
+    def _staff_bill(self, o):
+        return {'id': o.id, 'name': o.name, 'date': self._local(o, o.date_order), 'amount': round(o.amount_total, 2),
+                'employee': o.utange_staff_id.name or '', 'employee_id': o.utange_staff_id.id,
+                'by': (o.employee_id.name if 'employee_id' in o._fields and o.employee_id else o.user_id.name) or '',
+                'reason': o.utange_staff_reason or '', 'cleared': bool(o.utange_staff_cleared),
+                'cleared_by': o.utange_staff_cleared_by or '', 'cleared_on': self._local(o, o.utange_staff_cleared_date),
+                'items': ', '.join('%g %s' % (l.qty, l.product_id.display_name) for l in o.lines[:6])}
+
+    @http.route('/utange/mgr/staff_bills', type='json', auth='user', methods=['POST'], csrf=False)
+    def staff_bills(self, state='open', employee_id=None, **kw):
+        """Employees bills: credit sales to staff, open (to be paid / deducted) or cleared."""
+        bad = self._check()
+        if bad:
+            return bad
+        domain = [('utange_staff_id', '!=', False), ('state', '!=', 'cancel')]
+        if state == 'open':
+            domain.append(('utange_staff_cleared', '=', False))
+        elif state == 'cleared':
+            domain.append(('utange_staff_cleared', '=', True))
+        if str(employee_id or '').isdigit() and int(employee_id):
+            domain.append(('utange_staff_id', '=', int(employee_id)))
+        orders = request.env['pos.order'].sudo().search(domain, order='date_order desc', limit=400)
+        people = {}
+        for o in orders:
+            p = people.setdefault(o.utange_staff_id.id, {'employee_id': o.utange_staff_id.id, 'name': o.utange_staff_id.name,
+                                                         'open': 0.0, 'cleared': 0.0, 'count': 0})
+            p['count'] += 1
+            p['cleared' if o.utange_staff_cleared else 'open'] += o.amount_total
+        return {'ok': True, 'people': sorted(({**p, 'open': round(p['open'], 2), 'cleared': round(p['cleared'], 2)}
+                                              for p in people.values()), key=lambda p: -p['open']),
+                'bills': [self._staff_bill(o) for o in orders],
+                'total_open': round(sum(o.amount_total for o in orders if not o.utange_staff_cleared), 2)}
+
+    @http.route('/utange/mgr/staff_bill_clear', type='json', auth='user', methods=['POST'], csrf=False)
+    def staff_bill_clear(self, order_ids=None, employee_id=None, undo=False, **kw):
+        bad = self._check()
+        if bad:
+            return bad
+        Order = request.env['pos.order'].sudo()
+        if order_ids:
+            orders = Order.browse([int(x) for x in order_ids]).exists().filtered('utange_staff_id')
+        elif str(employee_id or '').isdigit():
+            orders = Order.search([('utange_staff_id', '=', int(employee_id)), ('utange_staff_cleared', '=', False),
+                                   ('state', '!=', 'cancel')])
+        else:
+            orders = Order
+        if not orders:
+            return {'ok': False, 'error': 'Nothing to clear.'}
+        u = request.env.user
+        if not (u._utange_can_approve() or u.has_group('point_of_sale.group_pos_manager')):
+            return {'ok': False, 'error': 'Only a manager can clear employees bills.'}
+        if undo:
+            orders.write({'utange_staff_cleared': False, 'utange_staff_cleared_by': False, 'utange_staff_cleared_date': False})
+        else:
+            orders.write({'utange_staff_cleared': True, 'utange_staff_cleared_by': u.name,
+                          'utange_staff_cleared_date': fields.Datetime.now()})
+        return {'ok': True, 'message': '%d bill(s) %s.' % (len(orders), 'opened again' if undo else 'cleared')}
+
+    # ------------------------------------------------------------------
+    # Staff rights: waiters (orders and bills only) and cashiers (take payment)
+    # ------------------------------------------------------------------
+    PRESETS = {
+        'waiter': {'sell': True, 'charge': False, 'open': False, 'close': False, 'requisition': True,
+                   'purchase': False, 'items': False},
+        'cashier': {'sell': True, 'charge': True, 'open': True, 'close': True, 'requisition': True,
+                    'purchase': False, 'items': False},
+    }
+
+    def _can_set_rights(self):
+        u = request.env.user
+        return u.has_group('base.group_system') or u.has_group('point_of_sale.group_pos_manager') or u._utange_can_approve()
+
+    def _staff_row(self, e, cfg):
+        from ..models.res_users import PERMS
+        holder = e.user_id or e
+        admin = bool(e.user_id and (e.user_id._is_superuser() or e.user_id.has_group('base.group_system')))
+        perms = {p: holder._utange_allowed(p) for p, _l in PERMS}
+        if admin or not holder.utange_restrict:
+            role = 'full'
+        elif perms == self.PRESETS['waiter']:
+            role = 'waiter'
+        elif perms == self.PRESETS['cashier']:
+            role = 'cashier'
+        else:
+            role = 'custom'
+        return {'id': e.id, 'name': e.name, 'job': e.job_title or '', 'login': e.user_id.login or '',
+                'has_pin': bool(e.pin), 'admin': admin, 'restrict': bool(holder.utange_restrict) and not admin,
+                'perms': perms, 'role': role,
+                'pos_manager': bool(cfg and cfg._utange_is_manager(employee=e)),
+                'approver': bool(e.utange_approver or (e.user_id and e.user_id.utange_approver))}
+
+    @http.route('/utange/mgr/staff', type='json', auth='user', methods=['POST'], csrf=False)
+    def staff(self, **kw):
+        bad = self._check()
+        if bad:
+            return bad
+        from ..models.res_users import PERMS
+        cfg = self._cfg()
+        emps = request.env['hr.employee'].sudo().search([], order='name', limit=300)
+        return {'ok': True, 'can_edit': self._can_set_rights(),
+                'perm_labels': [{'key': p, 'label': l} for p, l in PERMS],
+                'staff': [self._staff_row(e, cfg) for e in emps]}
+
+    @http.route('/utange/mgr/staff_set', type='json', auth='user', methods=['POST'], csrf=False)
+    def staff_set(self, employee_id=None, role=None, perms=None, **kw):
+        """role: waiter | cashier | full, or custom perms {perm: bool}. Staff with an Odoo login: set on the login."""
+        bad = self._check()
+        if bad:
+            return bad
+        if not self._can_set_rights():
+            return {'ok': False, 'error': 'Only POS managers can change rights.'}
+        from ..models.res_users import PERMS
+        e = request.env['hr.employee'].sudo().browse(int(employee_id or 0)).exists()
+        if not e:
+            return {'ok': False, 'error': 'Employee not found.'}
+        if e.user_id and (e.user_id._is_superuser() or e.user_id.has_group('base.group_system')):
+            return {'ok': False, 'error': '%s is an administrator: always allowed everything.' % e.name}
+        holder = e.user_id.sudo() if e.user_id else e
+        if role == 'full':
+            vals = {'utange_restrict': False}
+        else:
+            chosen = dict(self.PRESETS.get(role) or {})
+            if not chosen:
+                chosen = {p: bool((perms or {}).get(p)) for p, _l in PERMS}
+            vals = {'utange_restrict': True, **{'utange_perm_%s' % p: bool(chosen.get(p)) for p, _l in PERMS}}
+        holder.write(vals)
+        e.message_post(body='Utange rights changed by %s: %s.' % (request.env.user.name, role or 'custom'))
+        return {'ok': True, 'message': '%s: %s.' % (e.name, {'waiter': 'waiter (orders and bills, no payment)',
+                                                                'cashier': 'cashier (takes payment)',
+                                                                'full': 'everything'}.get(role, 'rights saved')),
+                'staff': self._staff_row(e, self._cfg())}
+
+    # ------------------------------------------------------------------
+    # Stock take (exact quantities) and transfers main store -> bar / kitchen
+    # ------------------------------------------------------------------
+    def _point_location(self, cfg, point):
+        if point == 'bar':
+            return cfg.utange_bar_location_id
+        if point == 'kitchen':
+            return cfg.utange_kitchen_location_id
+        if point == 'main':
+            return cfg._utange_location()
+        return cfg._utange_store_location()
+
+    def _can_stock(self):
+        u = request.env.user
+        return u.has_group('stock.group_stock_manager') or u.has_group('point_of_sale.group_pos_manager') \
+            or u._utange_can_approve()
+
+    @http.route('/utange/mgr/stock_take_lines', type='json', auth='user', methods=['POST'], csrf=False)
+    def stock_take_lines(self, config_id=None, point='store', q=None, **kw):
+        bad = self._check()
+        if bad:
+            return bad
+        cfg = self._config(config_id)
+        loc = self._point_location(cfg, point) if cfg else None
+        if not loc:
+            return {'ok': False, 'error': 'This location is not set on the Point of Sale (Handheld settings).'}
+        products = cfg._utange_products(storable=True)
+        if point in ('bar', 'kitchen'):
+            products = products.filtered(lambda p: p.product_tmpl_id._utange_point() == point)
+        q = (q or '').strip().lower()
+        if q:
+            products = products.filtered(lambda p: q in p.display_name.lower())
+        points = [{'point': 'store', 'label': 'Main store', 'location': cfg._utange_store_location().display_name}]
+        for pt, label in (('bar', 'Bar'), ('kitchen', 'Kitchen')):
+            l = self._point_location(cfg, pt)
+            if l and l != cfg._utange_store_location():
+                points.append({'point': pt, 'label': label, 'location': l.display_name})
+        return {'ok': True, 'location': loc.display_name, 'points': points, 'config': cfg.name,
+                'items': [{'product_id': p.id, 'name': p.display_name, 'uom': p.uom_id.name or '',
+                           'categ': p.pos_categ_ids[:1].name or '',
+                           'qty': p.with_context(location=loc.id).qty_available} for p in products]}
+
+    @http.route('/utange/mgr/stock_take_apply', type='json', auth='user', methods=['POST'], csrf=False)
+    def stock_take_apply(self, config_id=None, point='store', counts=None, note=None, **kw):
+        """counts: [{product_id, qty}] = what is really there. Odoo's stock is set to it (inventory adjustment)."""
+        bad = self._check()
+        if bad:
+            return bad
+        if not self._can_stock():
+            return {'ok': False, 'error': 'Only managers can do a stock take.'}
+        cfg = self._config(config_id)
+        loc = self._point_location(cfg, point) if cfg else None
+        if not loc:
+            return {'ok': False, 'error': 'This location is not set on the Point of Sale.'}
+        env = request.env
+        Move = env['stock.move'].sudo()
+        Product = env['product.product'].sudo()
+        done = []
+        try:
+            for c in (counts or [])[:1500]:
+                p = Product.browse(int(c.get('product_id') or 0)).exists()
+                if not p or p.type != 'product' or c.get('qty') in (None, ''):
+                    continue
+                diff = float(c['qty']) - p.with_context(location=loc.id).qty_available
+                if abs(diff) < 0.0001:
+                    continue
+                inv = p.with_company(cfg.company_id).property_stock_inventory
+                src, dst = (inv, loc) if diff > 0 else (loc, inv)
+                m = Move.create({'name': 'Utange stock take (%s)' % (note or env.user.name)[:60], 'origin': 'Stock take',
+                                 'product_id': p.id, 'product_uom': p.uom_id.id, 'product_uom_qty': abs(diff),
+                                 'location_id': src.id, 'location_dest_id': dst.id, 'company_id': cfg.company_id.id,
+                                 'is_inventory': True})
+                m._action_confirm()
+                m.quantity = abs(diff)
+                m.picked = True
+                m._action_done()
+                done.append('%s %+g' % (p.display_name, diff))
+        except Exception as e:
+            request.env.cr.rollback()
+            return {'ok': False, 'error': _err(e)}
+        return {'ok': True, 'changed': len(done),
+                'message': ('Stock take saved: %d items corrected in %s.' % (len(done), loc.display_name)) if done
+                else 'Stock take saved: everything matched.'}
+
+    @http.route('/utange/mgr/transfer', type='json', auth='user', methods=['POST'], csrf=False)
+    def transfer(self, config_id=None, to='bar', lines=None, **kw):
+        """Moves stock from the main store to the bar or the kitchen now (lines: [{product_id, qty}])."""
+        bad = self._check()
+        if bad:
+            return bad
+        if not self._can_stock():
+            return {'ok': False, 'error': 'Only managers can transfer stock.'}
+        cfg = self._config(config_id)
+        src = cfg._utange_store_location() if cfg else None
+        dst = self._point_location(cfg, to) if cfg and to in ('bar', 'kitchen', 'main') else None
+        if not src or not dst or src == dst:
+            return {'ok': False, 'error': 'Set the main store and the %s locations on the Point of Sale first.' % to}
+        env = request.env
+        Product = env['product.product'].sudo()
+        items = []
+        for l in (lines or [])[:300]:
+            p = Product.browse(int(l.get('product_id') or 0)).exists()
+            q = float(l.get('qty') or 0)
+            if p and q > 0:
+                items.append((p, q))
+        if not items:
+            return {'ok': False, 'error': 'Add at least one item with a quantity.'}
+        wh = src.warehouse_id or cfg.picking_type_id.warehouse_id
+        ptype = wh.int_type_id if wh else env['stock.picking.type'].sudo().search(
+            [('code', '=', 'internal'), ('company_id', 'in', (cfg.company_id.id, False))], limit=1)
+        if not ptype:
+            return {'ok': False, 'error': 'No internal transfer type: enable Storage Locations in Inventory settings.'}
+        try:
+            picking = env['stock.picking'].sudo().create({
+                'picking_type_id': ptype.id, 'location_id': src.id, 'location_dest_id': dst.id,
+                'origin': 'Manager app transfer (%s)' % env.user.name,
+                'move_ids': [(0, 0, {'name': p.display_name, 'product_id': p.id, 'product_uom_qty': q,
+                                     'product_uom': p.uom_id.id, 'location_id': src.id, 'location_dest_id': dst.id})
+                             for p, q in items]})
+            picking.action_confirm()
+            short = []
+            for m in picking.move_ids:
+                have = m.product_id.with_context(location=src.id).qty_available
+                give = max(0.0, min(m.product_uom_qty, have))
+                if give < m.product_uom_qty:
+                    short.append('%s (store has %g)' % (m.product_id.display_name, max(have, 0)))
+                m.quantity = give
+                m.picked = True
+            if not any(m.quantity > 0 for m in picking.move_ids):
+                request.env.cr.rollback()
+                return {'ok': False, 'error': 'The main store has none of these items. Do a stock take of the main store first.'}
+            picking.move_ids.filtered(lambda m: m.quantity <= 0)._action_cancel()
+            picking.with_context(skip_backorder=True, picking_ids_not_to_backorder=picking.ids,
+                                 skip_sms=True, skip_immediate=True).button_validate()
+        except Exception as e:
+            request.env.cr.rollback()
+            return {'ok': False, 'error': _err(e)}
+        return {'ok': True, 'message': '%s done: %s → %s.%s' % (picking.name, src.display_name, dst.display_name,
+                                                                (' Short: ' + '; '.join(short)) if short else '')}

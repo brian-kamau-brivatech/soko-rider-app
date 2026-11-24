@@ -9,7 +9,8 @@ import 'receipt_screen.dart';
 class CartLine {
   final PosProduct product;
   final double qty;
-  CartLine(this.product, this.qty);
+  final String note; // internal note for the kitchen / bar
+  CartLine(this.product, this.qty, [this.note = '']);
   double get total => product.price * qty;
 }
 
@@ -44,6 +45,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
   String _customerName = '';
   List<Map<String, dynamic>> _found = const [];
   Timer? _debounce;
+  // Employee bill: the sale is charged to a member of staff (e.g. the soda missing at opening, to whoever closed last)
+  bool _staffMode = false;
+  List<Map<String, dynamic>>? _staff;
+  Map<String, dynamic>? _lastCloser;
+  int? _staffId;
+  String _staffName = '';
+  final _staffReason = TextEditingController();
+  String _staffQ = '';
+  bool get _hasAccount => widget.setup.methods.any((m) => m.account);
 
   double get _total => double.parse(widget.lines.fold<double>(0, (a, l) => a + l.total).toStringAsFixed(2));
   double get _tendered => double.tryParse(_cash.text.trim()) ?? 0;
@@ -55,10 +65,26 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _ref.dispose();
     _name.dispose();
     _search.dispose();
+    _staffReason.dispose();
     super.dispose();
   }
 
+  Future<void> _loadStaff() async {
+    try {
+      final r = await Api.call('/utange/pos/staff', Store.i.base());
+      if (!mounted) return;
+      setState(() {
+        _staff = ll(r['staff']);
+        _lastCloser = r['last_closer'] is Map ? Map<String, dynamic>.from(r['last_closer'] as Map) : null;
+      });
+    } on ApiError catch (e) {
+      if (mounted) toast(context, e.message);
+      await Store.i.handle(e);
+    }
+  }
+
   bool get _ready {
+    if (_staffMode) return _staffId != null;
     if (_method.cash) return _tendered + 0.001 >= _total;
     if (_method.account) return _customerId != null;
     return true;
@@ -85,12 +111,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final r = await Api.call('/utange/pos/sell', Store.i.base({
         'uid': _uid,
         if (widget.orderId != null) 'order_id': widget.orderId,
-        'lines': [for (final l in widget.lines) {'product_id': l.product.id, 'qty': l.qty}],
-        'payments': [
-          {'method_id': _method.id, 'amount': amount, if (_ref.text.trim().isNotEmpty) 'ref': _ref.text.trim()}
+        'lines': [
+          for (final l in widget.lines) {'product_id': l.product.id, 'qty': l.qty, if (l.note.isNotEmpty) 'note': l.note}
         ],
-        if (_customerId != null) 'customer_id': _customerId,
-        if (_customerId == null && _name.text.trim().isNotEmpty) 'customer_name': _name.text.trim(),
+        if (_staffMode) ...{
+          'staff_id': _staffId,
+          'staff_reason': _staffReason.text.trim(),
+          'payments': const [],
+        } else ...{
+          'payments': [
+            {'method_id': _method.id, 'amount': amount, if (_ref.text.trim().isNotEmpty) 'ref': _ref.text.trim()}
+          ],
+          if (_customerId != null) 'customer_id': _customerId,
+          if (_customerId == null && _name.text.trim().isNotEmpty) 'customer_name': _name.text.trim(),
+        },
       }));
       final sale = Sale.fromJson(Map<String, dynamic>.from(r['order'] as Map));
       if (widget.setup.kitchenPrinters.isNotEmpty) {
@@ -101,7 +135,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           order: widget.table.isNotEmpty ? (sale.ref.isEmpty ? sale.name : sale.ref) : (widget.label.isEmpty ? sale.name : '${widget.label} · ${sale.name}'),
           table: widget.table,
           cashier: sale.cashier,
-          cart: [for (final l in widget.lines) (l.product.id, l.qty, l.product.name, l.product.categIds)],
+          cart: [for (final l in widget.lines) (l.product.id, l.qty, l.product.name, l.product.categIds, l.product.price, l.note)],
           sent: {for (final e in widget.sent.entries) e.key: Map<int, double>.from(e.value)},
           note: sale.customer.isEmpty ? '' : 'Customer: ${sale.customer}',
         ).then((res) {
@@ -151,19 +185,38 @@ class _PaymentScreenState extends State<PaymentScreen> {
           for (final m in widget.setup.methods)
             ChoiceChip(
               label: Text(m.name),
-              selected: _method.id == m.id,
-              onSelected: (_) => setState(() => _method = m),
+              selected: !_staffMode && _method.id == m.id,
+              onSelected: (_) => setState(() {
+                _method = m;
+                _staffMode = false;
+              }),
               selectedColor: C.green,
               showCheckmark: false,
-              labelStyle: h(14, w: FontWeight.w700, color: _method.id == m.id ? Colors.white : C.ink),
+              labelStyle: h(14, w: FontWeight.w700, color: !_staffMode && _method.id == m.id ? Colors.white : C.ink),
               backgroundColor: Colors.white,
-              side: BorderSide(color: _method.id == m.id ? C.green : C.line),
+              side: BorderSide(color: !_staffMode && _method.id == m.id ? C.green : C.line),
+            ),
+          if (_hasAccount)
+            ChoiceChip(
+              avatar: Icon(Icons.badge_rounded, size: 18, color: _staffMode ? Colors.white : C.navy),
+              label: const Text('Employee bill'),
+              selected: _staffMode,
+              onSelected: (_) {
+                setState(() => _staffMode = true);
+                if (_staff == null) _loadStaff();
+              },
+              selectedColor: C.navy,
+              showCheckmark: false,
+              labelStyle: h(14, w: FontWeight.w700, color: _staffMode ? Colors.white : C.ink),
+              backgroundColor: Colors.white,
+              side: BorderSide(color: _staffMode ? C.navy : C.line),
             ),
         ]),
         const SizedBox(height: 14),
-        if (_method.cash) _cashBox(change),
-        if (_method.account) _accountBox(),
-        if (!_method.cash && !_method.account)
+        if (_staffMode) _staffBox(),
+        if (!_staffMode && _method.cash) _cashBox(change),
+        if (!_staffMode && _method.account) _accountBox(),
+        if (!_staffMode && !_method.cash && !_method.account)
           Container(
             padding: const EdgeInsets.all(14),
             decoration: card(),
@@ -178,7 +231,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               ),
             ]),
           ),
-        if (!_method.account) ...[
+        if (!_staffMode && !_method.account) ...[
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(14),
@@ -190,10 +243,59 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
         ],
         const SizedBox(height: 18),
-        primaryButton('Complete sale', _ready ? _complete : null, icon: Icons.check_circle_rounded, busy: _saving),
+        primaryButton(_staffMode ? 'Charge to ${_staffName.isEmpty ? 'employee' : _staffName}' : 'Complete sale',
+            _ready ? _complete : null, icon: _staffMode ? Icons.badge_rounded : Icons.check_circle_rounded, busy: _saving),
         const SizedBox(height: 8),
         const Text('Saved as a POS order in the open shift, same as the Odoo POS screen.',
             textAlign: TextAlign.center, style: TextStyle(color: C.muted, fontSize: 12.5)),
+      ]),
+    );
+  }
+
+  /// Employee bill: who is charged (the one who closed the last shift is suggested first) and why.
+  Widget _staffBox() {
+    final all = _staff;
+    final q = _staffQ.trim().toLowerCase();
+    final last = _lastCloser;
+    final shown = (all ?? const <Map<String, dynamic>>[])
+        .where((e) => q.isEmpty || ss(e['name']).toLowerCase().contains(q))
+        .where((e) => last == null || q.isNotEmpty || ii(e['id']) != ii(last['id']))
+        .take(q.isEmpty ? 8 : 30)
+        .toList();
+    Widget pick(Map<String, dynamic> e, {String? hint}) => ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(_staffId == ii(e['id']) ? Icons.check_circle_rounded : Icons.person_rounded,
+              color: _staffId == ii(e['id']) ? C.green : C.navy),
+          title: Text(ss(e['name']), style: h(14.5, w: FontWeight.w700)),
+          subtitle: hint != null ? Text(hint) : (ss(e['job']).isEmpty ? null : Text(ss(e['job']))),
+          onTap: () => setState(() {
+            _staffId = ii(e['id']);
+            _staffName = ss(e['name']);
+          }),
+        );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: card(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('Charged to a member of staff (credit). It shows in Employees bills until a manager clears it.',
+            style: TextStyle(color: C.muted, fontSize: 12.5)),
+        const SizedBox(height: 8),
+        if (all == null)
+          const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator(color: C.green)))
+        else ...[
+          if (last != null && q.isEmpty) pick(last, hint: 'Closed the last shift'),
+          TextField(
+            onChanged: (v) => setState(() => _staffQ = v),
+            decoration: const InputDecoration(labelText: 'Find employee', prefixIcon: Icon(Icons.search_rounded)),
+          ),
+          for (final e in shown) pick(e),
+        ],
+        const SizedBox(height: 6),
+        TextField(
+          controller: _staffReason,
+          decoration: const InputDecoration(
+              labelText: 'Reason (optional)', hintText: 'e.g. 1 soda missing at opening', prefixIcon: Icon(Icons.notes_rounded)),
+        ),
       ]),
     );
   }
